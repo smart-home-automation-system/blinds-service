@@ -2,8 +2,8 @@
 
 The roller shutters of the house (epic HAS-242): moving the Eaton and Shelly blinds, knowing
 where they really are and running them on schedules that take the weather into account. Since
-HAS-243 a skeleton: it consumes the device events, has its clients and the notification
-publisher, and acts on nothing yet.
+HAS-243 it consumes the device events (and does nothing with them yet); since HAS-244 it knows
+the blinds from the device registry and moves them on command through three drivers.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -16,15 +16,18 @@ review.
 - Talks to: RabbitMQ — consumes `device.prod.blinds` on `/device` (user `device`), publishes
   notifications to `/notification` (user `notification`, a second connection); calls
   `database-service` (device registry), `weather-service` and `amx-service` over k8s DNS
-  (`internal.service.*`). No endpoints, not routed by `api-gateway-service`.
+  (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
+  `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
 - Uses libraries: `cholewa-commons` 1.8.0 (pool, error contract, connection names,
-  `NotificationPublisher`), `smart-home-sdk` 1.9.0, `shelly-client` 2.0.0 (its three beans are
-  registered — nothing calls a device yet).
+  `NotificationPublisher`), `smart-home-sdk` 1.9.0 (`SmartDevice` of the registry),
+  `shelly-client` 2.0.0 (`ShellyGen1Client`, `ShellyRpcClient`).
 - Database: own database `home-automation-blinds`, pool `database.pool.max-size: 2` (heating 2 /
   database 4 / water 2 / presence 2 / blinds 2 = 12 of 22), pinned by
   `BlindsServiceApplicationTest`. No migration yet.
 - Integrates with hardware: the Eaton blinds through `amx-service`, the Shelly blinds over HTTP
-  (commands) and MQTT (their status topics) — both still to come.
+  (commands, since HAS-244) and MQTT (their status topics — HAS-245). Registered for the
+  verification of HAS-244: `Office window` (id 52, Gen1 SHSW-25) and `Office door` (id 53, Gen2
+  Plus 2PM cover); the other Shelly blinds come with HAS-255.
 
 ## Build & run
 
@@ -43,6 +46,21 @@ review.
   body differ), logs at `DEBUG` only and acknowledges; manual ack, prefetch 3,
   `.contextCapture()` last, errors logged and completed — a `Mono` that errors is redelivered
   at once.
+- **The blinds are the registry's, read every five minutes** (`BlindRegistry`,
+  `BlindRegistryRefresh`): a failed read keeps the last list (WARN); until one read has
+  succeeded a lookup reads the registry itself and answers `REGISTRY_UNAVAILABLE` (502), never
+  `NOT_FOUND_BLINDS`. `BlindMapper` skips what it cannot drive, and an Eaton binding never gets
+  `positioning`.
+- **Commands** (`BlindsCommandService`): protection first (`ProtectionGuard`), then the driver
+  chosen by the sealed `BlindBinding` (`BlindsDrivers`), sent once. Anything a driver fails with
+  becomes `DEVICE_FAILED`, a 502 whose answer carries the code alone — what the device said goes
+  to the ERROR line of `BlindsExceptionProcessor`. A room goes one blind after the other, each
+  with its own error handling; a room where nothing moved fails.
+- **`source` is the caller's word** — nothing behind the gateway is authenticated, so anyone on
+  the LAN can send `source=protection`. HAS-249 must not let a command through the protection
+  because of its `source`; the engine and the protection call the service in-process.
+- **The codes of `BlindsError` are wire contract** (`BlindsErrorTest`); a new or renamed code
+  needs a text in the dashboard.
 - **One instance, `Recreate`, never scaled**: the schedule engine will live in its memory.
   `@EnableScheduling` is in `SchedulingConfig` under `@Profile("!test")`.
 - **The broker passwords have no default in `home`**: `BrokerPasswordCheck` refuses the start
