@@ -55,7 +55,7 @@ final class BlindMapper {
         final int channel = shelly.getChannel() == null ? 0 : shelly.getChannel();
 
         return Optional.of(shelly.getGeneration() >= 2
-            ? new BlindBinding.ShellyGen2(shelly.getAddress(), channel)
+            ? new BlindBinding.ShellyGen2(shelly.getAddress(), channel, shelly.getDeviceId())
             : new BlindBinding.ShellyGen1(shelly.getAddress(), channel));
     }
 

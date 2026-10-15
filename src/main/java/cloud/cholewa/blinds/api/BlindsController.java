@@ -4,7 +4,6 @@ import cloud.cholewa.blinds.model.BlindCommand;
 import cloud.cholewa.blinds.model.CommandSource;
 import cloud.cholewa.blinds.model.RoomCommandReply;
 import cloud.cholewa.blinds.service.BlindsCommandService;
-import cloud.cholewa.home.model.RoomName;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
@@ -15,8 +14,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebInputException;
 import reactor.core.publisher.Mono;
-
-import java.util.Arrays;
 
 //The commands for the blinds. 202, not 200: the answer says the device took the command, never that
 //the blind got there. The values are taken exactly as written - a typo moves nothing.
@@ -58,7 +55,7 @@ public class BlindsController {
         @RequestParam final String command,
         @RequestParam(defaultValue = "dashboard") final String source
     ) {
-        return blindsCommandService.moveRoom(room(room), command(command), source(source))
+        return blindsCommandService.moveRoom(Rooms.exactly(room), command(command), source(source))
             .map(reply -> ResponseEntity.accepted().body(reply));
     }
 
@@ -70,14 +67,5 @@ public class BlindsController {
     private static CommandSource source(final String source) {
         return CommandSource.ofParameter(source)
             .orElseThrow(() -> new ServerWebInputException("source must be dashboard, schedule or protection"));
-    }
-
-    //the value of the room exactly as the registry writes it, "living room" included - fromValue of
-    //the SDK ignores the case, a command here does not
-    private static RoomName room(final String room) {
-        return Arrays.stream(RoomName.values())
-            .filter(name -> name.getValue().equals(room))
-            .findFirst()
-            .orElseThrow(() -> new ServerWebInputException("room is not a room of the house"));
     }
 }

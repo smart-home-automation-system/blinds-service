@@ -10,6 +10,7 @@ import cloud.cholewa.blinds.model.BlindCommand;
 import cloud.cholewa.blinds.model.CommandSource;
 import cloud.cholewa.blinds.model.RoomCommandReply.BlindOutcome;
 import cloud.cholewa.blinds.registry.BlindRegistry;
+import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.home.model.BlindsPlacement;
 import cloud.cholewa.home.model.RoomName;
 import cloud.cholewa.home.model.SmartVendor;
@@ -42,7 +43,8 @@ class BlindsCommandServiceTest {
     private final BlindsDrivers drivers = mock(BlindsDrivers.class);
     private final BlindsDriver driver = mock(BlindsDriver.class);
     private final ProtectionGuard protection = mock(ProtectionGuard.class);
-    private final BlindsCommandService service = new BlindsCommandService(registry, drivers, protection);
+    private final BlindStateTracker tracker = mock(BlindStateTracker.class);
+    private final BlindsCommandService service = new BlindsCommandService(registry, drivers, protection, tracker);
 
     @BeforeEach
     void setUp() {
@@ -58,8 +60,11 @@ class BlindsCommandServiceTest {
 
         StepVerifier.create(service.move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE)).verifyComplete();
 
-        verify(protection).check(KITCHEN, CommandSource.SCHEDULE);
-        verify(driver).move(KITCHEN, BlindCommand.CLOSE);
+        //noted before it goes out: the device may report the movement before it answers
+        final InOrder order = inOrder(protection, tracker, driver);
+        order.verify(protection).check(KITCHEN, CommandSource.SCHEDULE);
+        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE);
+        order.verify(driver).move(KITCHEN, BlindCommand.CLOSE);
     }
 
     @Test
@@ -91,6 +96,7 @@ class BlindsCommandServiceTest {
             .verify();
 
         assertThat(called).isFalse();
+        verify(tracker, never()).commanded(any(), any());
     }
 
     @Test

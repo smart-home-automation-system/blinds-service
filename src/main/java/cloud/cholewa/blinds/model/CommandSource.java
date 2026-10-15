@@ -5,8 +5,8 @@ import java.util.Optional;
 
 /**
  * Who asked for a move, by the value of the {@code source} parameter: a person on the dashboard,
- * a schedule, or the wind and frost protection. Written to the log of every command; the state of
- * a blind takes it with HAS-245.
+ * a schedule, or the wind and frost protection. Written to the log of every command, and the
+ * {@code source} of the state of a blind the command moved.
  */
 public enum CommandSource {
     DASHBOARD("dashboard"), SCHEDULE("schedule"), PROTECTION("protection");

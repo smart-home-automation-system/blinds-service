@@ -9,8 +9,12 @@ public sealed interface BlindBinding {
     record ShellyGen1(String address, int channel) implements BlindBinding {
     }
 
-    /** A Shelly Gen2+ cover: {@code Cover.*} with {@code id = channel}. */
-    record ShellyGen2(String address, int channel) implements BlindBinding {
+    /**
+     * A Shelly Gen2+ cover: {@code Cover.*} with {@code id = channel}. {@code deviceId} is the id
+     * it publishes its MQTT topics under; {@code null} only for a device registered before the
+     * registry asked for it - then its state comes from the reconciliation alone.
+     */
+    record ShellyGen2(String address, int channel, String deviceId) implements BlindBinding {
     }
 
     /** An Eaton blinds actuator on a data point, moved through amx-service. */
