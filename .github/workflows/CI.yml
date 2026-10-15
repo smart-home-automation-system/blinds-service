@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure Maven settings for GitHub Packages
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>github-prv</id>
+                <username>${env.GH_PRV_USERNAME}</username>
+                <password>${env.GH_PRV_PASSWORD}</password>
+              </server>
+              <server>
+                <id>github-org-smart-home</id>
+                <username>${env.GH_PRV_USERNAME}</username>
+                <password>${env.GH_PRV_PASSWORD}</password>
+              </server>
+            </servers>
+          </settings>
+          XML
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          overwrite-settings: false
+
+      - name: Build with Maven
+        env:
+          GH_PRV_USERNAME: ${{ secrets.GH_PRV_USERNAME }}
+          GH_PRV_PASSWORD: ${{ secrets.GH_PRV_PASSWORD }}
+        run: mvn -B package --file pom.xml
+
+      # The embed of sarisia/actions-status-discord without its "Event" field (the commit and
+      # its whole message): that action can only show all of the context or none of it, so the
+      # message is built here. Nothing of the workflow context is interpolated into the script -
+      # it arrives through the environment. The empty field in the middle is not inline: it keeps
+      # the four others in two rows of two, as in the embed of that action.
+      - name: Discord notification
+        if: always()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          JOB_STATUS: ${{ job.status }}
+          TRIGGERED_BY: ${{ github.triggering_actor }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "No Discord webhook in this run - nothing sent"
+            exit 0
+          fi
+          case "$JOB_STATUS" in
+            success)   label="Success";   color=2664261 ;;
+            cancelled) label="Cancelled"; color=14396169 ;;
+            *)         label="Failure";   color=13313073 ;;
+          esac
+          repository_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          jq -n \
+            --arg title "$label: $GITHUB_WORKFLOW ${GITHUB_REPOSITORY#*/}" \
+            --argjson color "$color" \
+            --arg repository "[$GITHUB_REPOSITORY]($repository_url)" \
+            --arg ref "$GITHUB_REF" \
+            --arg actor "$TRIGGERED_BY" \
+            --arg workflow "[$GITHUB_WORKFLOW]($repository_url/actions/runs/$GITHUB_RUN_ID)" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{embeds: [{title: $title, color: $color, timestamp: $timestamp, fields: [
+               {name: "Repository", value: $repository, inline: true},
+               {name: "Ref", value: $ref, inline: true},
+               {name: "\u200b", value: "\u200b", inline: false},
+               {name: "Triggered by", value: $actor, inline: true},
+               {name: "Workflow", value: $workflow, inline: true}
+             ]}]}' > discord.json
+          curl --silent --show-error --fail --max-time 20 \
+            -H "Content-Type: application/json" --data @discord.json "$DISCORD_WEBHOOK" \
+            || echo "::warning::The Discord notification was not delivered"
