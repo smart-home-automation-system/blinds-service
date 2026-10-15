@@ -6,6 +6,11 @@ spring:
     active: home
   webflux:
     base-path: "/home/blinds"
+  jackson:
+    deserialization:
+      # 50.9 for a position or a hold of a schedule would be cut to 50 without a word; a fraction
+      # where a whole number belongs is a body that cannot be read
+      accept-float-as-int: false
   reactor:
     # default LIMITED restores ThreadLocals only in "tap" and "handle", so traceId would be
     # missing from the MDC of every log statement inside a reactive chain

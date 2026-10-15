@@ -14,7 +14,6 @@ import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
-import java.time.LocalTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -22,7 +21,8 @@ import java.util.Set;
 //What a schedule has to say, and how its fields go together, before it is stored. Nothing in a
 //body has a default - a field left out is refused, not read as off or zero. The schema (V2) repeats
 //what one row can say of it and would answer with the name of a constraint, where this answers in
-//words, by the values of the API ("day off", "wind gust"). The first broken rule is the answer
+///words, by the values of the API ("day off", "wind gust"). The first broken rule is the answer.
+//A time is to the minute already when the body is read (HH:mm, WindowEnd)
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ScheduleRules {
 
@@ -74,29 +74,18 @@ public final class ScheduleRules {
             require(value.time() != null, end + ".time is missing for a clock time");
             require(value.offsetMinutes() == null && value.earliest() == null && value.latest() == null,
                 end + " is a clock time: offsetMinutes, earliest and latest belong to sunrise and sunset");
-            requireWholeMinute(end + ".time", value.time());
             return;
         }
 
         final String kind = value.kind().value();
         require(value.time() == null, end + " is the " + kind + ": time belongs to a clock time");
         require(value.offsetMinutes() != null, end + ".offsetMinutes is missing for the " + kind);
-        require(Math.abs(value.offsetMinutes()) <= MAX_OFFSET_MINUTES,
+        //not Math.abs: the absolute value of Integer.MIN_VALUE is still negative
+        require(value.offsetMinutes() >= -MAX_OFFSET_MINUTES && value.offsetMinutes() <= MAX_OFFSET_MINUTES,
             end + ".offsetMinutes is between -" + MAX_OFFSET_MINUTES + " and " + MAX_OFFSET_MINUTES);
-        if (value.earliest() != null) {
-            requireWholeMinute(end + ".earliest", value.earliest());
-        }
-        if (value.latest() != null) {
-            requireWholeMinute(end + ".latest", value.latest());
-        }
         if (value.earliest() != null && value.latest() != null) {
             require(value.latest().isAfter(value.earliest()), end + ".latest is after " + end + ".earliest");
         }
-    }
-
-    //what the engine fires on is a minute; a second given would be dropped without a word
-    private static void requireWholeMinute(final String field, final LocalTime time) {
-        require(time.getSecond() == 0 && time.getNano() == 0, field + " is a time to the minute");
     }
 
     private static void checkTargets(final List<ScheduleTarget> targets) {
@@ -108,7 +97,7 @@ public final class ScheduleRules {
             require(target != null, "a target is missing");
             require((target.room() == null) != (target.deviceId() == null),
                 "a target is a room or one blind (deviceId), one of the two");
-            require(target.deviceId() == null || target.deviceId() > 0, "deviceId is the id of a blind of the registry");
+            require(target.deviceId() == null || target.deviceId() > 0, "deviceId is a positive id of the device registry");
             require(seen.add(target), "a target is listed once: " + describe(target));
         }
     }

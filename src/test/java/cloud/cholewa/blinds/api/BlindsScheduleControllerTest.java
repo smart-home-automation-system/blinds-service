@@ -236,7 +236,8 @@ class BlindsScheduleControllerTest {
             .jsonPath("$.errors[0].details").isEqualTo("no schedule with id 9");
     }
 
-    //a value the API does not have - also in another case - is a body that cannot be read
+    //a value the API does not have - also in another case, or a fraction for a whole number - is a
+    //body that cannot be read
     @ParameterizedTest
     @ValueSource(strings = {
         "\"dayType\": \"any\"|\"dayType\": \"weekend\"",
@@ -248,7 +249,9 @@ class BlindsScheduleControllerTest {
         "\"room\": \"living room\"|\"room\": \"attic\"",
         "\"time\": \"23:00\"|\"time\": \"25:00\"",
         "\"time\": \"23:00\"|\"time\": \"23:00:00\"",
-        "\"deviceId\": 53|\"deviceId\": \"door\""
+        "\"deviceId\": 53|\"deviceId\": \"door\"",
+        "\"holdMinutes\": 10|\"holdMinutes\": 10.5",
+        "\"offsetMinutes\": -30|\"offsetMinutes\": -30.9"
     })
     void should_refuse_a_body_with_a_value_the_api_does_not_have(final String replacement) {
         final String[] parts = replacement.split("\\|");
