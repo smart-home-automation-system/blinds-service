@@ -31,11 +31,25 @@ The roller shutters of the house: moving them, knowing where they really are and
 on schedules that take the weather into account (epic HAS-242). The blinds are Eaton devices,
 driven through `amx-service`, and Shelly devices.
 
-This release is the **skeleton** (HAS-243): the service starts, takes the events of every
-device off its queue and has its clients ready, but it does nothing with them yet and has no
-endpoints.
+Since HAS-244 the service **moves the blinds on command**. It does not know yet where a blind
+is (HAS-245), has no schedules (HAS-246..248) and no wind and frost protection (HAS-249).
 
 Everything is non-blocking (Spring WebFlux / Reactor):
+
+- **The blinds come from the device registry** of `database-service`
+  (`GET /home/device/registry?kind=blinds&enabled=true`), read at the start and every five
+  minutes and kept in memory. A failed read keeps the last list (a WARN). A blind just
+  registered is driven within five minutes; a blind switched off or removed is still driven
+  for up to five minutes. A device the registry holds too little about (a Shelly without its
+  address or generation, an Eaton device without its point) is skipped with a WARN.
+- **Three kinds of actuator behind one driver interface**:
+  - a Shelly Gen1 roller (`generation` 1): `GET /roller/<channel>?go=open|close|stop|to_pos`;
+  - a Shelly Gen2+ cover: `Cover.Open|Close|Stop|GoToPosition` with `id = channel`;
+  - an Eaton actuator: `POST /home/amx/eaton/blinds/{point}?command=` of `amx-service`. It has
+    no positions, whatever the registry says.
+- **A command is sent once and never repeated.** It writes no state: where a blind is will
+  come only from what the devices report. Every command is logged at INFO with who asked for
+  it (`source`).
 
 - **Device events** arrive from RabbitMQ, virtual host `/device` (user `device`), queue
   `device.prod.blinds` (`device.dev.blinds` in the `local` profile). The queue is bound to
@@ -74,8 +88,39 @@ Everything is non-blocking (Spring WebFlux / Reactor):
 
 # API
 
-Base path `/home/blinds` (`spring.webflux.base-path`). No endpoints yet; the service is not
-routed by `api-gateway-service`.
+Base path `/home/blinds` (`spring.webflux.base-path`). Not routed by `api-gateway-service`
+yet (HAS-251) — inside the cluster, or through a port-forward.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/home/blinds/{id}?command=open\|close\|stop&source=` | Move one blind (`id` of the device registry) |
+| `POST` | `/home/blinds/{id}/position?value=0..100&source=` | Send a blind with `positioning` to a position, 0 closed, 100 open |
+| `POST` | `/home/blinds/rooms/{room}?command=open\|close\|stop&source=` | Move every blind of a room, one after the other |
+
+- **The answer is `202`**: the device (or `amx-service`) took the command — never that the
+  blind got there. A single blind answers with no body.
+- **`command`, `room` and `source` are taken exactly as written**; anything else is a `400`.
+  `room` is the value of the registry (`living room`, `office`, …). `source` is `dashboard`
+  (the default), `schedule` or `protection`. It is only recorded for now; nothing decides by it.
+- **A room** answers `{"room", "command", "moved": [{"id", "name"}], "failed": [{"id", "name", "code"}]}`.
+  A blind that fails is skipped and named in `failed`, and the others still move. When none
+  moved, the room fails like a single blind: `DEVICE_FAILED` when a device failed, otherwise
+  the refusal of the first blind.
+
+Failures come in the error contract of `cholewa-commons`, with a `code` to branch on:
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | — | an unknown `command`, `source` or `room`, a `value` outside 0–100, a missing parameter |
+| 400 | `UNSUPPORTED_POSITION` | a position for a blind without `positioning` (every Eaton actuator) |
+| 404 | `NOT_FOUND_BLINDS` | no switched-on blind with the `id`, no blind in the room |
+| 409 | `PROTECTION_ACTIVE` | the wind and frost protection keeps the blind where it is (HAS-249; nothing raises it yet) |
+| 502 | `DEVICE_FAILED` | the device or `amx-service` did not take the command, or did not answer in time. The answer carries no more than that; what the device said is in the ERROR log. It **may have been carried out** — read the state, do not repeat it blindly |
+| 502 | `REGISTRY_UNAVAILABLE` | the device registry could not be read since the start of the pod |
+
+Timeouts: the Shelly devices 3 s to connect and 5 s to answer (the defaults of
+`shelly-client`); `amx-service` 3 s / 10 s — it may read the registry and wait for the frame
+server first.
 
 # Database
 

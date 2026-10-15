@@ -117,11 +117,13 @@ internal:
       url: http://weather-service:6200
       connect-timeout: 3s
       response-timeout: 5s
-    # the Eaton blinds are moved through the frame server of amx-service
+    # the Eaton blinds are moved through the frame server of amx-service. 10 s, not 5: amx-service
+    # may read the registry first (2 s connect, 3 s answer) and then wait up to 3 s for the frame
+    # server - a frame sent at 6 s must not be reported here as a failed command
     amx:
       url: http://amx-service:6200
       connect-timeout: 3s
-      response-timeout: 5s
+      response-timeout: 10s
 
 ---
 

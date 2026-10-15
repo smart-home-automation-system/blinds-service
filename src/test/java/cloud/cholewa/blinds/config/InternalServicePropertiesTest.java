@@ -49,7 +49,7 @@ class InternalServicePropertiesTest {
                 assertThat(properties.weather().url()).isEqualTo("http://localhost:6010");
                 assertThat(properties.amx().url()).isEqualTo("http://localhost:6001");
                 //the timeouts of the shared document stay
-                assertThat(properties.amx().responseTimeout()).isEqualTo(Duration.ofSeconds(5));
+                assertThat(properties.amx().responseTimeout()).isEqualTo(Duration.ofSeconds(10));
             });
     }
 
