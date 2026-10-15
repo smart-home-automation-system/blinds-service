@@ -28,9 +28,19 @@ class BlindMapperTest {
     @Test
     void should_take_a_gen2_or_later_shelly_as_a_cover() {
         assertThat(BlindMapper.toBlind(shelly(2, 0))).get().extracting(Blind::binding)
-            .isEqualTo(new BlindBinding.ShellyGen2("10.0.0.21", 0));
+            .isEqualTo(new BlindBinding.ShellyGen2("10.0.0.21", 0, null));
         assertThat(BlindMapper.toBlind(shelly(4, 0))).get().extracting(Blind::binding)
-            .isEqualTo(new BlindBinding.ShellyGen2("10.0.0.21", 0));
+            .isEqualTo(new BlindBinding.ShellyGen2("10.0.0.21", 0, null));
+    }
+
+    //the id its MQTT topics are published under, to tell its events from the others of the queue
+    @Test
+    void should_keep_the_device_id_of_a_cover() {
+        final SmartDevice device = shelly(2, 0);
+        device.getShelly().deviceId("shellyplus2pm-08a6f77e5e34");
+
+        assertThat(BlindMapper.toBlind(device)).get().extracting(Blind::binding)
+            .isEqualTo(new BlindBinding.ShellyGen2("10.0.0.21", 0, "shellyplus2pm-08a6f77e5e34"));
     }
 
     //a device with one roller or cover leaves the channel out

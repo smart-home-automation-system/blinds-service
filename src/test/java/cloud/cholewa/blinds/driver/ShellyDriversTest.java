@@ -24,7 +24,7 @@ import static org.mockito.Mockito.when;
 class ShellyDriversTest {
 
     private static final Blind ROLLER = blind(new BlindBinding.ShellyGen1("10.0.0.21", 1));
-    private static final Blind COVER = blind(new BlindBinding.ShellyGen2("10.0.0.22", 0));
+    private static final Blind COVER = blind(new BlindBinding.ShellyGen2("10.0.0.22", 0, "shellyplus2pm-0a0b0c"));
 
     private final ShellyGen1Client gen1Client = mock(ShellyGen1Client.class);
     private final ShellyRpcClient rpcClient = mock(ShellyRpcClient.class);

@@ -49,6 +49,18 @@ public class BlindRegistry {
             });
     }
 
+    //The list as last read, empty until the first read succeeded - never a read of its own. For the
+    //device events and the polls: a lookup per event would read the registry 130 times a minute
+    //while database-service is away
+    public List<Blind> current() {
+        final List<Blind> list = blinds.get();
+        return list == null ? List.of() : list;
+    }
+
+    public Mono<List<Blind>> all() {
+        return known();
+    }
+
     public Mono<Blind> find(final long id) {
         return known()
             .flatMap(list -> Mono.justOrEmpty(list.stream().filter(blind -> blind.id() == id).findFirst()))
