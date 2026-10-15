@@ -18,7 +18,10 @@ public enum BlindsError implements ErrorId {
     PROTECTION_ACTIVE("Blinds protection is active"),
     DEVICE_FAILED("Blind did not take the command"),
     //the blinds are not known yet: database-service could not be read since the start
-    REGISTRY_UNAVAILABLE("Device registry unavailable");
+    REGISTRY_UNAVAILABLE("Device registry unavailable"),
+    //a schedule that breaks a rule of ScheduleRules; the details say which
+    INVALID_SCHEDULE("Invalid schedule"),
+    NOT_FOUND_SCHEDULE("Schedule not found");
 
     private final String description;
 }
