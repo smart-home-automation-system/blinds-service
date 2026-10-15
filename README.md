@@ -33,8 +33,9 @@ driven through `amx-service`, and Shelly devices.
 
 Since HAS-244 the service **moves the blinds on command**, and since HAS-245 it **knows the
 real state of every blind**, whoever moved it — the Shelly app, a wall button, an AMX panel or
-the service itself. It has no schedules yet (HAS-246..248) and no wind and frost protection
-(HAS-249).
+the service itself. Since HAS-246 it **stores the schedules** the dashboard edits; nothing runs
+them yet (the engine is HAS-247, the overrides of a resident HAS-248), and there is no wind and
+frost protection (HAS-249).
 
 Everything is non-blocking (Spring WebFlux / Reactor):
 
@@ -120,6 +121,12 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
 | `POST` | `/home/blinds/{id}?command=open\|close\|stop&source=` | Move one blind (`id` of the device registry) |
 | `POST` | `/home/blinds/{id}/position?value=0..100&source=` | Send a blind with `positioning` to a position, 0 closed, 100 open |
 | `POST` | `/home/blinds/rooms/{room}?command=open\|close\|stop&source=` | Move every blind of a room, one after the other |
+| `GET` | `/home/blinds/schedules` | Every schedule, in the order they were created |
+| `GET` | `/home/blinds/schedules/{id}` | One schedule |
+| `POST` | `/home/blinds/schedules` | Create a schedule: `201` with the schedule as stored |
+| `PUT` | `/home/blinds/schedules/{id}` | Replace a schedule whole, `enabled` included: `200` with the schedule |
+| `POST` | `/home/blinds/schedules/{id}/enable` \| `/disable` | Switch a schedule on or off without sending the rest: `200` with the schedule |
+| `DELETE` | `/home/blinds/schedules/{id}` | Remove a schedule with its targets and conditions: `204` |
 
 - **A blind in a read** is `{"id", "name", "room", "vendor", "placement", "positioning",
   "state", "position", "lastDirection", "movedAt", "source", "reachable"}`:
@@ -158,10 +165,83 @@ Failures come in the error contract of `cholewa-commons`, with a `code` to branc
 | 409 | `PROTECTION_ACTIVE` | the wind and frost protection keeps the blind where it is (HAS-249; nothing raises it yet) |
 | 502 | `DEVICE_FAILED` | the device or `amx-service` did not take the command, or did not answer in time. The answer carries no more than that; what the device said is in the ERROR log. It **may have been carried out** — read the state, do not repeat it blindly |
 | 502 | `REGISTRY_UNAVAILABLE` | the device registry could not be read since the start of the pod |
+| 400 | `INVALID_SCHEDULE` | a schedule that breaks a rule (below); `details` says which, in words |
+| 404 | `NOT_FOUND_SCHEDULE` | no schedule with the `id` |
+| 400 | — | a schedule body that cannot be read: a value the API does not have (`weekend`, `ANY`), a time that is not `HH:mm`, a fraction where a whole number belongs |
 
 Timeouts: the Shelly devices 3 s to connect and 5 s to answer (the defaults of
 `shelly-client`); `amx-service` 3 s / 10 s — it may read the registry and wait for the frame
 server first.
+
+# Schedules
+
+A schedule moves its targets **once a day**, when **every condition holds inside its window**, on
+the days of its type. It is stored here; the engine that fires it comes with HAS-247.
+
+| Field | Values |
+|---|---|
+| `name` | 3–60 characters, no space at either end |
+| `enabled` | `true` / `false` — a write sets it like every other field |
+| `dayType` | `workday`, `day off` (a weekend, a holiday or a day off of the household, as the calendar of `database-service` says) or `any` |
+| `window.from`, `window.to` | each `{"kind": "clock", "time": "HH:mm"}`, or `{"kind": "sunrise"\|"sunset", "offsetMinutes": -180..180, "earliest": "HH:mm", "latest": "HH:mm"}` — `earliest` and `latest` optional |
+| `targets` | 1–30, each `{"room": "living room"}` (every blind of the room) or `{"deviceId": 53}` (one blind of the registry), each listed once |
+| `conditions` | 0–10 (an empty list for none), each `{"metric", "operator", "threshold" \| "value", "holdMinutes": 0..120}` |
+| `action` | `open`, `close` or `position` with `position` 0 (closed) to 100 (open) |
+| `id`, `createdAt`, `updatedAt` | the service's, in a read only; a body that sends them does not set them |
+
+- **Conditions**: `illuminance` (lx, 0–200 000), `outside temperature` (°C, −50–60) and
+  `wind gust` (m/s, 0–100) are compared `lt` or `gt` with a `threshold` of at most one decimal;
+  `raining` and `window closed` (the window of the room of the target) are compared `is` with a
+  `value`, `true` or `false`. `holdMinutes` is how long the condition has to hold without a break
+  before it counts.
+- **The window**: two clock times run forward within one day — `to` after `from`, never across
+  midnight. Where an end is a time of the sun, the order is known only on the day.
+- **Nothing in a body has a default**: a field left out is refused with `INVALID_SCHEDULE`, never
+  read as off or zero. A field that does not belong (`position` with `close`, `offsetMinutes` on a
+  clock time, a `threshold` for `raining`) is refused as well. The first broken rule is the answer.
+- **A target blind is not checked against the registry**: a write does not depend on
+  `database-service`, and a target of a blind removed later moves nothing.
+- **A write is all or nothing**: the schedule, its targets and its conditions are written in one
+  transaction — a schedule stays as it was while a write fails.
+
+Close the living room and the office door half an hour before sunset, not before 17:00 and not
+after 21:30, once it has been darker than 200 lx for ten minutes:
+
+```json
+{
+  "name": "Evening close",
+  "enabled": true,
+  "dayType": "any",
+  "window": {
+    "from": {"kind": "sunset", "offsetMinutes": -30, "earliest": "17:00", "latest": "21:30"},
+    "to": {"kind": "clock", "time": "23:00"}
+  },
+  "targets": [{"room": "living room"}, {"deviceId": 53}],
+  "conditions": [{"metric": "illuminance", "operator": "lt", "threshold": 200, "holdMinutes": 10}],
+  "action": "close"
+}
+```
+
+Summer shading: on a workday between 11:00 and 16:00, half-close the office once it has been
+warmer than 25.5 °C for half an hour and brighter than 40 000 lx for a quarter, with its window
+closed:
+
+```json
+{
+  "name": "Summer shading",
+  "enabled": true,
+  "dayType": "workday",
+  "window": {"from": {"kind": "clock", "time": "11:00"}, "to": {"kind": "clock", "time": "16:00"}},
+  "targets": [{"room": "office"}],
+  "conditions": [
+    {"metric": "outside temperature", "operator": "gt", "threshold": 25.5, "holdMinutes": 30},
+    {"metric": "illuminance", "operator": "gt", "threshold": 40000, "holdMinutes": 15},
+    {"metric": "window closed", "operator": "is", "value": true, "holdMinutes": 0}
+  ],
+  "action": "position",
+  "position": 30
+}
+```
 
 # Database
 
@@ -178,3 +258,10 @@ server first.
   the start, before the first report is applied. If the database cannot be read then, the
   state is rebuilt from the devices — within a minute for Gen1, five for Gen2.
 - No retention yet: a row per change keeps the table small.
+- **`blinds_schedule`, `blinds_schedule_target`, `blinds_schedule_condition`** (`V2`, HAS-246):
+  a schedule with its window, action and position; its targets (a room by the name of its
+  `RoomName` constant, or a `device_id` of the registry — another database, so no foreign key);
+  its conditions (`threshold` for `lt` / `gt`, `expected` for `is`). The enums are stored by the
+  names of their constants. The targets and conditions keep the order they were given (their
+  ids) and go with their schedule (`ON DELETE CASCADE`). The CHECKs repeat what one row can say
+  of a schedule.

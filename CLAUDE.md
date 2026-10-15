@@ -4,7 +4,9 @@ The roller shutters of the house (epic HAS-242): moving the Eaton and Shelly bli
 where they really are and running them on schedules that take the weather into account. Since
 HAS-243 it consumes the device events; since HAS-244 it knows the blinds from the device registry
 and moves them on command through three drivers; since HAS-245 it tracks the real state of every
-blind from what the devices report and serves it (`GET /home/blinds`, `/rooms/{room}`, `/{id}`).
+blind from what the devices report and serves it (`GET /home/blinds`, `/rooms/{room}`, `/{id}`);
+since HAS-246 it stores the schedules (`/home/blinds/schedules`, CRUD) - nothing runs them yet
+(HAS-247).
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -24,7 +26,10 @@ review.
   `shelly-client` 2.0.0 (`ShellyGen1Client`, `ShellyRpcClient`).
 - Database: own database `home-automation-blinds`, pool `database.pool.max-size: 2` (heating 2 /
   database 4 / water 2 / presence 2 / blinds 2 = 12 of 22), pinned by
-  `BlindsServiceApplicationTest`. One table, `blinds_state` (`V1`, HAS-245).
+  `BlindsServiceApplicationTest`. Tables: `blinds_state` (`V1`, HAS-245); `blinds_schedule`,
+  `blinds_schedule_target`, `blinds_schedule_condition` (`V2`, HAS-246). **The next migration is
+  `V3`** - the Jira descriptions of the epic count one higher (they gave the schedules `V3`): HAS-247
+  (runs) takes V3, HAS-248 (overrides) V4.
 - Integrates with hardware: the Eaton blinds through `amx-service`, the Shelly blinds over HTTP
   (commands, since HAS-244) and MQTT (their status topics — HAS-245). Registered for the
   verification of HAS-244: `Office window` (id 52, Gen1 SHSW-25) and `Office door` (id 53, Gen2
@@ -34,7 +39,8 @@ review.
 
 - Build + tests: `mvn verify` **needs a running Docker** since HAS-245: `BlindStateRepositoryTest`
   runs the `DISTINCT ON` and the `touchLatest` of the state on a Testcontainers PostgreSQL
-  (`@DataR2dbcTest`, migrations applied by hand). Without Docker it fails, it is not skipped.
+  (`@DataR2dbcTest`, migrations applied by hand), and so does `ScheduleServiceTest` (the schedules,
+  their transaction and the CHECKs of `V2`). Without Docker it fails, it is not skipped.
 - Local run: `home,local` Spring profiles, port `6011` (Actuator `8011`); in-cluster port
   `6200`, Actuator `8200`. Locally the broker is `localhost`, the services are on 6005 / 6010 /
   6001, and the broker passwords default to a dummy.
@@ -98,6 +104,19 @@ review.
   because of its `source`; the engine and the protection call the service in-process.
 - **The codes of `BlindsError` are wire contract** (`BlindsErrorTest`); a new or renamed code
   needs a text in the dashboard.
+- **The schedules (HAS-246)**: `ScheduleRules` holds every rule of a body and answers
+  `INVALID_SCHEDULE` (400) with the reason, pinned rule by rule by `ScheduleRulesTest`; no
+  `@Valid`, nothing in a body has a default. `ScheduleService` writes the three tables in **one
+  transaction** (`TransactionalOperator`, auto-configured on the pooled `ConnectionFactory`) -
+  `should_leave_a_schedule_as_it_was_when_a_replace_fails` fails without it. Reads go one after
+  the other (pool of 2). The models live here, not in the SDK (one consumer); the dashboard
+  copies the values of the enums (`day off`, `outside temperature`, `lt`/`gt`/`is`), so a new or
+  renamed value is a change on both sides, and a renamed constant a migration of the rows.
+  - Times are `HH:mm` both ways (`@JsonFormat` on `WindowEnd`): Jackson 3 would write
+    `17:00:00`. A threshold is answered as given (`200`, not `200.0` or `2E+2`).
+  - A CHECK that comes out NULL lets the row in - `V2` says `IS NOT NULL` explicitly where it
+    matters.
+  - A target blind is not checked against the registry: the engine must skip one it does not know.
 - **One instance, `Recreate`, never scaled**: the schedule engine will live in its memory.
   `@EnableScheduling` is in `SchedulingConfig` under `@Profile("!test")`.
 - **The broker passwords have no default in `home`**: `BrokerPasswordCheck` refuses the start
