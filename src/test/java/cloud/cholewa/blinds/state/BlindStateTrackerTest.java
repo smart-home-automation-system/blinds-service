@@ -184,6 +184,18 @@ class BlindStateTrackerTest {
         verify(repository).touchLatest(53, NOW.plusMinutes(1), 0);
     }
 
+    //the column keeps microseconds: the time in memory must be the one a restart reads back
+    @Test
+    void should_keep_the_time_of_a_change_to_the_microsecond() {
+        clock.move(Duration.ofNanos(1_234_567));
+
+        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+
+        StepVerifier.create(tracker.status(53).map(BlindStatus::movedAt))
+            .expectNext(NOW.plusNanos(1_234_000))
+            .verifyComplete();
+    }
+
     //rows removed by hand: the state is stored again rather than confirmed into nothing
     @Test
     void should_insert_a_row_when_there_is_none_to_confirm() {

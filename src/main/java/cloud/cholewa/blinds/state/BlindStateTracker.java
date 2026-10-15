@@ -17,6 +17,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -87,7 +88,8 @@ public class BlindStateTracker {
 
     public Mono<Void> observe(final Blind blind, final BlindReading reading) {
         return restored.then(Mono.defer(() -> {
-            final LocalDateTime now = LocalDateTime.now(clock);
+            //cut to what the column keeps: a restart must read back the same time
+            final LocalDateTime now = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
             final Command command = pendingCommand(blind.id());
             final AtomicReference<BlindStatus> before = new AtomicReference<>();
             final AtomicReference<Decision> decision = new AtomicReference<>();
