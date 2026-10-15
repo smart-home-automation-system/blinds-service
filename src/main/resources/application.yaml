@@ -1,0 +1,215 @@
+spring:
+  application:
+    name: blinds-service
+    version: @project.version@
+  profiles:
+    active: home
+  webflux:
+    base-path: "/home/blinds"
+  reactor:
+    # default LIMITED restores ThreadLocals only in "tap" and "handle", so traceId would be
+    # missing from the MDC of every log statement inside a reactive chain
+    context-propagation: auto
+  rabbitmq:
+    host: rabbitmq-headless
+    port: 5672
+    # the events of every device: the Shelly devices over MQTT and the Eaton devices from
+    # amx-service, all on amq.topic of /device, each queue bound with "#"
+    username: device
+    # no default on purpose: with one the pod would start, turn Ready and consume nothing.
+    # Without the variable the service does not start - BrokerPasswordCheck sees to that, the
+    # binder alone would take the placeholder for the password
+    password: ${rabbitmq-password}
+    virtual-host: /device
+    connection-timeout: 10s
+    requested-heartbeat: 10s
+    template:
+      # both default to false; without them the trace breaks at the queue
+      observation-enabled: true
+    listener:
+      simple:
+        observation-enabled: true
+        # the listener returns a Mono; with the default AUTO mode the container acks before the
+        # message is handled, so prefetch throttles nothing and the ack is sent twice
+        acknowledge-mode: manual
+        # how many events are in flight at once, the rest waits in the broker
+        prefetch: 3
+  flyway:
+    url: ${flyway-url:jdbc:postgresql://${database.host}:${database.port}/${database.name}}
+    user: ${database-user:dummyUser}
+    password: ${database-password:dummyPassword}
+    enabled: on
+
+database:
+  host: ${database-host:localhost}
+  port: ${database-port:5432}
+  name: ${database-name:dummyName}
+  username: ${database-user:dummyUser}
+  password: ${database-password:dummyPassword}
+  pool:
+    # this service's share of the 22 backend connections the managed database allows
+    # (heating 2 / database 4 / water 2 / presence 2 / blinds 2, 10 free); left out, the pool
+    # silently falls back to the library default of 4. The deployment is Recreate, so a rollout
+    # never holds a second pool - only Flyway opens one more connection over JDBC
+    max-size: 2
+
+server:
+  port: 6200
+management:
+  server:
+    port: 8200
+  endpoint:
+    health:
+      # a 404 on the readiness path crash-loops the pod, so the probe groups are pinned here
+      # instead of relying on Boot detecting the Kubernetes platform - and kept in the shared
+      # document, where the paths can be exercised locally on 8011 before the manifest ships
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  tracing:
+    sampling:
+      # default 0.1; a home system generates so little traffic that sampling everything is free,
+      # and a partially sampled trace is useless when it is the only record of a request
+      probability: 1.0
+
+logbook:
+  format:
+    style: json
+
+logging:
+  structured:
+    format:
+      console: logstash
+  level:
+    org.zalando.logbook: trace
+
+rabbitmq:
+  queue:
+    name: device.prod.blinds
+
+# the notification exchange is on the same broker as spring.rabbitmq.*, on its own virtual host;
+# it is a headers exchange and "env" is one of the two headers it routes by.
+# This group is the service's own, read by NotificationRabbitConfig for the second connection;
+# cholewa.notification.enabled of cholewa-commons stays unset - the publisher it creates uses the
+# connection of spring.rabbitmq.*, which leads to /device
+notification:
+  virtual-host: /notification
+  username: notification
+  # no default on purpose: with one the pod would start, turn Ready and fail every publish.
+  # Without the variable the service does not start (BrokerPasswordCheck)
+  password: ${notification-rabbitmq-password}
+  exchange: notification
+  env: prod
+
+# the services this one calls inside the cluster, over k8s DNS. A bare number of a timeout is
+# seconds
+internal:
+  service:
+    # the device registry: which device is a blind, and where
+    database:
+      url: http://database-service:6200
+      connect-timeout: 3s
+      response-timeout: 5s
+    weather:
+      url: http://weather-service:6200
+      connect-timeout: 3s
+      response-timeout: 5s
+    # the Eaton blinds are moved through the frame server of amx-service
+    amx:
+      url: http://amx-service:6200
+      connect-timeout: 3s
+      response-timeout: 5s
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: local
+  rabbitmq:
+    host: localhost
+    # a run on a workstation starts without the two variables of the broker; it takes the real
+    # passwords only to consume events or to publish a notification
+    password: ${rabbitmq-password:dummyPassword}
+
+server:
+  port: 6011
+management:
+  server:
+    port: 8011
+
+logbook:
+  format:
+    style: http
+
+logging:
+  structured:
+    format:
+      console: ""
+
+rabbitmq:
+  queue:
+    name: device.dev.blinds
+
+notification:
+  password: ${notification-rabbitmq-password:dummyPassword}
+  env: dev
+
+internal:
+  service:
+    database:
+      url: http://localhost:6005
+    weather:
+      url: http://localhost:6010
+    amx:
+      url: http://localhost:6001
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: test
+  # a context test starts the listener and the pool: everything that leads out of the JVM points
+  # at an address nothing listens on, so that a test cannot reach the broker, the database or
+  # another service even where their names resolve
+  rabbitmq:
+    host: localhost
+    port: 1
+    password: dummyPassword
+  flyway:
+    enabled: false
+
+database:
+  host: localhost
+  port: 1
+
+rabbitmq:
+  queue:
+    name: device.test.blinds
+
+# "test" matches no binding of the exchange: such a message would come back as unroutable
+notification:
+  password: dummyPassword
+  env: test
+
+internal:
+  service:
+    database:
+      url: http://localhost:1
+    weather:
+      url: http://localhost:1
+    amx:
+      url: http://localhost:1
+
+logbook:
+  format:
+    style: http
+
+logging:
+  structured:
+    format:
+      console: ""
