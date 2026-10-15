@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.zalando.logbook.Logbook;
+import reactor.netty.resources.ConnectionProvider;
 import reactor.test.StepVerifier;
 
 import java.io.IOException;
@@ -19,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WebClientConfigTest {
 
     private MockWebServer server;
+    private final ConnectionProvider connectionProvider = WebClientConfig.connectionProvider("test");
 
     @BeforeEach
     void setUp() throws IOException {
@@ -29,6 +31,7 @@ class WebClientConfigTest {
     @AfterEach
     void tearDown() {
         server.close();
+        connectionProvider.dispose();
     }
 
     @Test
@@ -56,9 +59,17 @@ class WebClientConfigTest {
             .verify(Duration.ofSeconds(10));
     }
 
+    //an idle connection to a restarted service must not be reused for ever
+    @Test
+    void should_retire_idle_and_old_connections_of_the_pool() {
+        assertThat(WebClientConfig.MAX_IDLE_TIME).isEqualTo(Duration.ofMinutes(2));
+        assertThat(WebClientConfig.MAX_LIFE_TIME).isEqualTo(Duration.ofMinutes(30));
+    }
+
     private WebClient client(final Duration responseTimeout) {
         return WebClientConfig.webClient(
             WebClient.builder(),
+            connectionProvider,
             Logbook.create(),
             new InternalServiceProperties.Endpoint(
                 "http://localhost:" + server.getPort(), Duration.ofSeconds(1), responseTimeout)

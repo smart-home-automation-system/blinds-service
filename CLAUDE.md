@@ -53,7 +53,12 @@ review.
   `RabbitAutoConfiguration` back off, and the listener would lose manual ack, prefetch and
   observation.
 - **Timeouts of the clients**: `internal.service.<name>.{connect,response}-timeout`, a bare
-  number is seconds, bounded 1–60 s (`InternalServicePropertiesTest`).
+  number is seconds, bounded 1–60 s (`InternalServicePropertiesTest`). Each client has its own
+  named `ConnectionProvider` with 2 min idle / 30 min life (the gateway's HAS-212 limits): the
+  global pool keeps a connection for ever, and a POST to `amx-service` written onto a dead socket
+  is not repeated.
+- **Shelly calls through `shelly-client` reach Logbook only via the `ShellyHttpClientCustomizer`
+  bean** (`shellyCallsInTheLog`): the library's clients put their own connector on the builder.
 - **The test document points everything outward at port 1** (broker, database, the three
   services), so a context test reaches nothing even where the names resolve.
 - **A migration is rehearsed on a throwaway PostgreSQL, never by a local run** — `home,local`

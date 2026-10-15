@@ -18,15 +18,13 @@ public class DeviceEventConsumer {
 
     @RabbitListener(queues = "${rabbitmq.queue.name}")
     Mono<Void> consume(final Message message) {
-        return Mono.fromRunnable(() -> log.debug(
-                "Device event received with routing key: {}",
-                message.getMessageProperties().getReceivedRoutingKey()
-            ))
-            .then()
+        final String routingKey = message.getMessageProperties().getReceivedRoutingKey();
+
+        return Mono.<Void>fromRunnable(() -> log.debug("Device event received with routing key: {}", routingKey))
             //an event that cannot be handled is logged and acknowledged: a Mono that errors is
             //redelivered at once, which for a message that fails the same way is a tight loop
             .onErrorResume(throwable -> {
-                log.error("Error while consuming a device event: {}", throwable.getMessage());
+                log.error("Error while consuming the device event {}", routingKey, throwable);
                 return Mono.empty();
             })
             //the listener observation lives in a ThreadLocal, but the container subscribes in a way that

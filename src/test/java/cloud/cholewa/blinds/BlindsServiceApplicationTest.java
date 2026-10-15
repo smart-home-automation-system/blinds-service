@@ -1,6 +1,8 @@
 package cloud.cholewa.blinds;
 
 import cloud.cholewa.commons.database.DatabaseProperties;
+import cloud.cholewa.shelly.http.ShellyHttpClientCustomizer;
+import cloud.cholewa.shelly.http.ShellyHttpClientCustomizer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -35,5 +37,12 @@ class BlindsServiceApplicationTest {
     @Test
     void should_schedule_nothing_under_the_test_profile() {
         assertThat(applicationContext.getBeanNamesForType(ScheduledAnnotationBeanPostProcessor.class)).isEmpty();
+    }
+
+    //the Shelly calls of the library reach the log only through the customizer
+    @Test
+    void should_put_the_shelly_calls_into_the_log() {
+        assertThat(applicationContext.getBeanNamesForType(ShellyHttpClientCustomizer.class))
+            .containsExactly("shellyCallsInTheLog");
     }
 }
