@@ -16,7 +16,9 @@ public enum BlindsError implements ErrorId {
     UNSUPPORTED_POSITION("Blind cannot be sent to a position"),
     //raised by the wind and frost protection (HAS-249)
     PROTECTION_ACTIVE("Blinds protection is active"),
-    DEVICE_FAILED("Blind did not take the command");
+    DEVICE_FAILED("Blind did not take the command"),
+    //the blinds are not known yet: database-service could not be read since the start
+    REGISTRY_UNAVAILABLE("Device registry unavailable");
 
     private final String description;
 }

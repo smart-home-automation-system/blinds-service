@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebInputException;
 import reactor.core.publisher.Mono;
 
+import java.util.Arrays;
+
 //The commands for the blinds. 202, not 200: the answer says the device took the command, never that
 //the blind got there. The values are taken exactly as written - a typo moves nothing.
 //No @Validated on the class - WebFlux validates the constrained parameters itself, and the
@@ -70,12 +72,12 @@ public class BlindsController {
             .orElseThrow(() -> new ServerWebInputException("source must be dashboard, schedule or protection"));
     }
 
-    //the value of the room as the registry writes it, "living room" included
+    //the value of the room exactly as the registry writes it, "living room" included - fromValue of
+    //the SDK ignores the case, a command here does not
     private static RoomName room(final String room) {
-        try {
-            return RoomName.fromValue(room);
-        } catch (IllegalArgumentException e) {
-            throw new ServerWebInputException("room is not a room of the house");
-        }
+        return Arrays.stream(RoomName.values())
+            .filter(name -> name.getValue().equals(room))
+            .findFirst()
+            .orElseThrow(() -> new ServerWebInputException("room is not a room of the house"));
     }
 }

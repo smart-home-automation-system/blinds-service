@@ -107,7 +107,7 @@ class BlindsControllerTest {
     @ValueSource(strings = {
         "/17?command=OPEN", "/17?command=up", "/17", "/17?command=open&source=bruno", "/abc?command=open",
         "/21/position?value=101", "/21/position?value=-1", "/21/position", "/rooms/attic?command=open",
-        "/rooms/office?command=down"
+        "/rooms/office?command=down", "/rooms/Office?command=open"
     })
     void should_refuse_what_is_not_a_command(final String uri) {
         webTestClient.post().uri(uri)

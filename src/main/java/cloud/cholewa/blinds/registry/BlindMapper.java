@@ -23,6 +23,7 @@ final class BlindMapper {
             return Optional.empty();
         }
 
+        //an Eaton actuator has no positions whatever the registry says: one place decides it
         return binding(device).map(binding -> new Blind(
             device.getId(),
             device.getName(),
@@ -30,7 +31,7 @@ final class BlindMapper {
             device.getVendor(),
             binding,
             device.getPlacement(),
-            Boolean.TRUE.equals(device.getPositioning())
+            Boolean.TRUE.equals(device.getPositioning()) && !(binding instanceof BlindBinding.Eaton)
         ));
     }
 

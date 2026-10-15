@@ -1,5 +1,9 @@
 package cloud.cholewa.blinds.registry;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import cloud.cholewa.blinds.error.BlindsError;
 import cloud.cholewa.blinds.error.BlindsException;
 import cloud.cholewa.blinds.model.Blind;
@@ -9,6 +13,7 @@ import cloud.cholewa.home.model.RoomName;
 import cloud.cholewa.home.model.SmartDevice;
 import cloud.cholewa.home.model.SmartVendor;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -92,14 +97,65 @@ class BlindRegistryTest {
             .verify();
     }
 
-    //nothing known while the registry cannot be read at all: unknown, not a failure of the device
+    //never read: "no such blind" would be a lie - the caller is told the registry is away
     @Test
-    void should_not_find_anything_while_the_registry_was_never_read() {
+    void should_answer_registry_unavailable_while_the_registry_was_never_read() {
         when(client.getBlinds()).thenReturn(Mono.error(new RegistryCallException("database-service answered 503")));
 
         StepVerifier.create(registry.find(17))
-            .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.NOT_FOUND_BLINDS))
+            .expectErrorSatisfies(e -> {
+                final BlindsException exception = (BlindsException) e;
+                assertThat(exception.getError()).isEqualTo(BlindsError.REGISTRY_UNAVAILABLE);
+                assertThat(exception.getHttpStatus().value()).isEqualTo(502);
+            })
             .verify();
+        StepVerifier.create(registry.inRoom(RoomName.KITCHEN))
+            .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.REGISTRY_UNAVAILABLE))
+            .verify();
+    }
+
+    //the alerts look at the level: a failed refresh is a WARN, the service goes on with the last list
+    @Test
+    void should_log_a_failed_refresh_at_warn() {
+        final ListAppender<ILoggingEvent> log = new ListAppender<>();
+        log.start();
+        final Logger logger = (Logger) LoggerFactory.getLogger(BlindRegistry.class);
+        logger.addAppender(log);
+        try {
+            when(client.getBlinds()).thenReturn(Mono.error(new RegistryCallException("database-service answered 500")));
+
+            StepVerifier.create(registry.refresh()).verifyComplete();
+
+            assertThat(log.list).singleElement().satisfies(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).contains("database-service answered 500");
+            });
+        } finally {
+            logger.detachAppender(log);
+        }
+    }
+
+    //a blind moved to another address keeps the count - the change is logged all the same
+    @Test
+    void should_log_every_change_of_the_list() {
+        final ListAppender<ILoggingEvent> log = new ListAppender<>();
+        log.start();
+        final Logger logger = (Logger) LoggerFactory.getLogger(BlindRegistry.class);
+        logger.addAppender(log);
+        try {
+            when(client.getBlinds())
+                .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))))
+                .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))))
+                .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 11))));
+
+            StepVerifier.create(registry.refresh()).verifyComplete();
+            StepVerifier.create(registry.refresh()).verifyComplete();
+            StepVerifier.create(registry.refresh()).verifyComplete();
+
+            assertThat(log.list).hasSize(2).allSatisfy(event -> assertThat(event.getLevel()).isEqualTo(Level.INFO));
+        } finally {
+            logger.detachAppender(log);
+        }
     }
 
     @Test

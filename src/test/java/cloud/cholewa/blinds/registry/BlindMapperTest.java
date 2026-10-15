@@ -49,6 +49,14 @@ class BlindMapperTest {
             .containsExactly(new BlindBinding.Eaton(9), false);
     }
 
+    //amx-service has no positions for a blinds actuator
+    @Test
+    void should_never_give_an_eaton_actuator_positioning() {
+        final SmartDevice device = base(17, SmartVendor.EATON).eaton(new EatonBinding().point(9)).positioning(true);
+
+        assertThat(BlindMapper.toBlind(device)).get().extracting(Blind::positioning).isEqualTo(false);
+    }
+
     @Test
     void should_skip_what_cannot_be_driven() {
         assertThat(BlindMapper.toBlind(base(1, SmartVendor.SHELLY))).isEmpty();

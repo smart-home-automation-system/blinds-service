@@ -143,16 +143,49 @@ class BlindsCommandServiceTest {
 
     @Test
     void should_name_a_blind_the_protection_kept_with_its_code() {
+        when(registry.inRoom(RoomName.OFFICE)).thenReturn(Mono.just(List.of(OFFICE, OFFICE_DOOR)));
+        when(protection.check(OFFICE, CommandSource.SCHEDULE))
+            .thenReturn(Mono.error(BlindsException.protectionActive(OFFICE, "frost")));
+        when(driver.move(OFFICE_DOOR, BlindCommand.OPEN)).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.SCHEDULE))
+            .assertNext(reply -> {
+                assertThat(reply.moved()).containsExactly(new BlindOutcome(22, "Blind 22", null));
+                assertThat(reply.failed()).containsExactly(new BlindOutcome(21, "Blind 21", "PROTECTION_ACTIVE"));
+            })
+            .verifyComplete();
+    }
+
+    //nothing to accept when nothing moved: a failed device wins over a refusal
+    @Test
+    void should_fail_the_room_as_device_failed_when_nothing_moved_and_a_device_failed() {
+        when(registry.inRoom(RoomName.OFFICE)).thenReturn(Mono.just(List.of(OFFICE, OFFICE_DOOR)));
+        when(protection.check(OFFICE, CommandSource.DASHBOARD))
+            .thenReturn(Mono.error(BlindsException.protectionActive(OFFICE, "frost")));
+        when(driver.move(OFFICE_DOOR, BlindCommand.OPEN)).thenReturn(Mono.error(new ShellyCallException("timed out")));
+
+        StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.DASHBOARD))
+            .expectErrorSatisfies(e -> {
+                final BlindsException exception = (BlindsException) e;
+                assertThat(exception.getError()).isEqualTo(BlindsError.DEVICE_FAILED);
+                assertThat(exception.getHttpStatus().value()).isEqualTo(502);
+            })
+            .verify();
+    }
+
+    @Test
+    void should_fail_the_room_with_the_refusal_when_the_protection_kept_every_blind() {
         when(registry.inRoom(RoomName.OFFICE)).thenReturn(Mono.just(List.of(OFFICE)));
         when(protection.check(OFFICE, CommandSource.SCHEDULE))
             .thenReturn(Mono.error(BlindsException.protectionActive(OFFICE, "frost")));
 
         StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.SCHEDULE))
-            .assertNext(reply -> {
-                assertThat(reply.moved()).isEmpty();
-                assertThat(reply.failed()).containsExactly(new BlindOutcome(21, "Blind 21", "PROTECTION_ACTIVE"));
+            .expectErrorSatisfies(e -> {
+                final BlindsException exception = (BlindsException) e;
+                assertThat(exception.getError()).isEqualTo(BlindsError.PROTECTION_ACTIVE);
+                assertThat(exception.getHttpStatus().value()).isEqualTo(409);
             })
-            .verifyComplete();
+            .verify();
     }
 
     @Test

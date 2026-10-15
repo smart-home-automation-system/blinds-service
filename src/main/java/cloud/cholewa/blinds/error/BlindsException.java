@@ -39,6 +39,14 @@ public class BlindsException extends RuntimeException {
         );
     }
 
+    public static BlindsException registryUnavailable(final Throwable cause) {
+        return new BlindsException(
+            HttpStatus.BAD_GATEWAY,
+            BlindsError.REGISTRY_UNAVAILABLE,
+            "the device registry was never read: " + describe(cause)
+        );
+    }
+
     public static BlindsException deviceFailed(final Blind blind, final Throwable cause) {
         return new BlindsException(
             HttpStatus.BAD_GATEWAY,

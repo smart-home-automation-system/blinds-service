@@ -30,17 +30,23 @@ public class BlindRegistry {
     private final AtomicReference<List<Blind>> blinds = new AtomicReference<>();
 
     public Mono<Void> refresh() {
+        return load()
+            .doOnError(e -> log.warn("Refresh of the blinds failed, the last list stays: {}", e.toString()))
+            .onErrorComplete()
+            .then();
+    }
+
+    //logged whenever the list changes, not only its size: a blind moved to another room or address
+    //must leave a trace of when the service learned it
+    private Mono<List<Blind>> load() {
         return Mono.defer(deviceRegistryClient::getBlinds)
             .map(BlindRegistry::toBlinds)
             .doOnNext(read -> {
                 final List<Blind> previous = blinds.getAndSet(read);
-                if (previous == null || previous.size() != read.size()) {
+                if (!read.equals(previous)) {
                     log.info("Blinds known from the device registry: {}", read.size());
                 }
-            })
-            .doOnError(e -> log.warn("Refresh of the blinds failed, the last list stays: {}", e.toString()))
-            .onErrorComplete()
-            .then();
+            });
     }
 
     public Mono<Blind> find(final long id) {
@@ -56,12 +62,13 @@ public class BlindRegistry {
             .switchIfEmpty(Mono.error(() -> BlindsException.notFound("no blind in the room " + room.getValue())));
     }
 
+    //never read: an unknown blind would be a lie, so the caller is told the registry is away
     private Mono<List<Blind>> known() {
         return Mono.defer(() -> {
             final List<Blind> list = blinds.get();
             return list != null
                 ? Mono.just(list)
-                : refresh().then(Mono.fromSupplier(() -> Optional.ofNullable(blinds.get()).orElse(List.of())));
+                : load().onErrorMap(e -> !(e instanceof BlindsException), BlindsException::registryUnavailable);
         });
     }
 

@@ -44,27 +44,43 @@ public class BlindsCommandService {
             : Mono.error(BlindsException.unsupportedPosition(blind)));
     }
 
-    //one blind after the other, in the order of the registry: the actuators of a room share a
-    //gateway or a circuit. One that fails is skipped and named - the others still move
+    //One blind after the other, in the order of the registry: the actuators of a room share a
+    //gateway or a circuit. One that fails is skipped and named - the others still move. When none
+    //moved there is nothing to accept: the room fails like a single blind would - DEVICE_FAILED
+    //when a device failed, otherwise the refusal of the first one
     public Mono<RoomCommandReply> moveRoom(final RoomName room, final BlindCommand command, final CommandSource source) {
         return blindRegistry.inRoom(room)
             .flatMapMany(Flux::fromIterable)
             .concatMap(blind -> move(blind, command, source)
                 .thenReturn(new Outcome(blind, null))
-                .onErrorResume(e -> {
-                    final BlindsError error = e instanceof BlindsException blindsException
-                        ? blindsException.getError()
-                        : BlindsError.DEVICE_FAILED;
-                    log.error("Blind {} of the room {} skipped: {}", blind.id(), room.getValue(), e.getMessage());
-                    return Mono.just(new Outcome(blind, error));
+                //execute() leaves nothing but a BlindsException
+                .onErrorResume(BlindsException.class, e -> {
+                    if (e.getHttpStatus().is5xxServerError()) {
+                        log.error("Blind {} of the room {} skipped: {}", blind.id(), room.getValue(), e.getMessage());
+                    } else {
+                        log.warn("Blind {} of the room {} skipped: {}", blind.id(), room.getValue(), e.getMessage());
+                    }
+                    return Mono.just(new Outcome(blind, e));
                 }))
             .collectList()
-            .map(outcomes -> new RoomCommandReply(
-                room.getValue(),
-                command.value(),
-                outcomes.stream().filter(outcome -> outcome.error() == null).map(Outcome::toReply).toList(),
-                outcomes.stream().filter(outcome -> outcome.error() != null).map(Outcome::toReply).toList()
-            ));
+            .flatMap(outcomes -> outcomes.stream().anyMatch(outcome -> outcome.failure() == null)
+                ? Mono.just(new RoomCommandReply(
+                    room.getValue(),
+                    command.value(),
+                    outcomes.stream().filter(outcome -> outcome.failure() == null).map(Outcome::toReply).toList(),
+                    outcomes.stream().filter(outcome -> outcome.failure() != null).map(Outcome::toReply).toList()))
+                : Mono.error(nothingMoved(room, outcomes)));
+    }
+
+    private static BlindsException nothingMoved(final RoomName room, final List<Outcome> outcomes) {
+        final BlindsException first = outcomes.stream()
+            .map(Outcome::failure)
+            .filter(failure -> failure.getError() == BlindsError.DEVICE_FAILED)
+            .findFirst()
+            .orElse(outcomes.getFirst().failure());
+
+        return new BlindsException(first.getHttpStatus(), first.getError(),
+            "no blind of the room " + room.getValue() + " moved");
     }
 
     private Mono<Void> move(final Blind blind, final BlindCommand command, final CommandSource source) {
@@ -86,10 +102,10 @@ public class BlindsCommandService {
             .onErrorMap(e -> !(e instanceof BlindsException), e -> BlindsException.deviceFailed(blind, e));
     }
 
-    private record Outcome(Blind blind, BlindsError error) {
+    private record Outcome(Blind blind, BlindsException failure) {
 
         private BlindOutcome toReply() {
-            return new BlindOutcome(blind.id(), blind.name(), error == null ? null : ErrorId.codeOf(error));
+            return new BlindOutcome(blind.id(), blind.name(), failure == null ? null : ErrorId.codeOf(failure.getError()));
         }
     }
 }
