@@ -321,6 +321,19 @@ class ScheduleServiceTest {
             .as(StepVerifier::create)
             .expectError(DataIntegrityViolationException.class)
             .verify();
+        //a CHECK that comes out NULL lets a row in: a missing offset and a missing position are refused
+        //by name
+        databaseClient.sql("UPDATE blinds_schedule SET window_from_offset_min = NULL WHERE id = :id")
+            .bind("id", created.id())
+            .fetch().rowsUpdated()
+            .as(StepVerifier::create)
+            .expectError(DataIntegrityViolationException.class)
+            .verify();
+        databaseClient.sql("UPDATE blinds_schedule SET action = 'POSITION' WHERE id = :id").bind("id", created.id())
+            .fetch().rowsUpdated()
+            .as(StepVerifier::create)
+            .expectError(DataIntegrityViolationException.class)
+            .verify();
     }
 
     private static Mono<Void> expectNotFound(final Mono<?> call) {

@@ -41,13 +41,14 @@ ALTER TABLE blinds_schedule
 ALTER TABLE blinds_schedule
     ADD CONSTRAINT blinds_schedule_window_to_kind_check CHECK (window_to_kind IN ('CLOCK', 'SUNRISE', 'SUNSET'));
 
--- a clock time has a time and nothing else, a time of the sun an offset and no time of its own
+-- a clock time has a time and nothing else, a time of the sun an offset and no time of its own.
+-- The IS NOT NULLs are not redundant: a CHECK that comes out NULL lets the row in
 ALTER TABLE blinds_schedule
     ADD CONSTRAINT blinds_schedule_window_from_shape_check CHECK (
         CASE window_from_kind
             WHEN 'CLOCK' THEN window_from_time IS NOT NULL AND window_from_offset_min IS NULL
                 AND window_from_earliest IS NULL AND window_from_latest IS NULL
-            ELSE window_from_time IS NULL AND window_from_offset_min BETWEEN -180 AND 180
+            ELSE window_from_time IS NULL AND window_from_offset_min IS NOT NULL AND window_from_offset_min BETWEEN -180 AND 180
             END);
 
 ALTER TABLE blinds_schedule
@@ -55,7 +56,7 @@ ALTER TABLE blinds_schedule
         CASE window_to_kind
             WHEN 'CLOCK' THEN window_to_time IS NOT NULL AND window_to_offset_min IS NULL
                 AND window_to_earliest IS NULL AND window_to_latest IS NULL
-            ELSE window_to_time IS NULL AND window_to_offset_min BETWEEN -180 AND 180
+            ELSE window_to_time IS NULL AND window_to_offset_min IS NOT NULL AND window_to_offset_min BETWEEN -180 AND 180
             END);
 
 ALTER TABLE blinds_schedule
@@ -64,7 +65,7 @@ ALTER TABLE blinds_schedule
 -- a position belongs to the action POSITION, and that action has one
 ALTER TABLE blinds_schedule
     ADD CONSTRAINT blinds_schedule_position_check CHECK (
-        (action = 'POSITION' AND position BETWEEN 0 AND 100) OR (action <> 'POSITION' AND position IS NULL));
+        (action = 'POSITION' AND position IS NOT NULL AND position BETWEEN 0 AND 100) OR (action <> 'POSITION' AND position IS NULL));
 
 -- What a schedule moves: a whole room (room, the name of a RoomName constant of the SDK) or one
 -- blind (device_id, the id of the device registry of database-service - another database, so no
