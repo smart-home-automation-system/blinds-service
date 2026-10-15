@@ -102,6 +102,15 @@ class BlindEventRouterTest {
         verify(tracker).observe(DOOR, new BlindReading(BlindState.OPENING, 12, Direction.OPEN, "SHC"));
     }
 
+    //an id copied from the page of the device into the registry in upper case
+    @Test
+    void should_match_the_id_of_a_cover_whatever_its_case() {
+        route("SHELLYPLUS2PM-08A6F77E5E34.status.cover:0", """
+            {"id":0,"state":"closed","current_pos":0,"pos_control":true}""");
+
+        verify(tracker).observe(DOOR, new BlindReading(BlindState.CLOSED, 0, null, null));
+    }
+
     @Test
     void should_skip_another_channel_and_another_component_of_the_cover() {
         route("shellyplus2pm-08a6f77e5e34.status.cover:1", """

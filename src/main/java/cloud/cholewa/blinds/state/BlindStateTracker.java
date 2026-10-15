@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -33,15 +34,17 @@ import java.util.stream.Stream;
 //
 //The memory is the truth while the pod runs; a write that fails leaves the database one change
 //behind, which the next restart reads back and the next readings correct. Readings of one blind
-//from two channels at once (a Gen1 action and the poll) are merged one after the other, but their
-//rows may be written in the other order - accepted for the same reason
+//from two channels at once (a Gen1 action and the poll) are merged one after the other, and their
+//rows are written in that order
 @Slf4j
 @Component
 public class BlindStateTracker {
 
-    //a change seen this long after a command of this service is that command's movement; an Eaton
-    //actuator reports its start within a second or two, a Gen1 roller at the next poll
-    static final Duration COMMAND_WINDOW = Duration.ofSeconds(60);
+    //a change seen this long after a command of this service is that command's movement. An Eaton
+    //actuator reports its start within a second or two; a Gen1 roller without actions only at the
+    //next poll, and two polls lie more than their 60 s apart (fixedDelay counts from the end of a
+    //pass, which may wait for devices that time out) - so twice that
+    static final Duration COMMAND_WINDOW = Duration.ofMinutes(2);
     static final String EXTERNAL = "external";
 
     //the width of the column: the word of a device is not trusted to be short
@@ -52,6 +55,10 @@ public class BlindStateTracker {
 
     private final Map<Long, BlindStatus> statuses = new ConcurrentHashMap<>();
     private final Map<Long, Command> commands = new ConcurrentHashMap<>();
+    //the end of the last write of every blind: the next one waits for it, so the rows of one blind
+    //are inserted in the order the states changed - the latest row (the highest id) is what a
+    //restart reads back. Only the last one is held, never a chain of them
+    private final Map<Long, Sinks.Empty<Void>> writes = new ConcurrentHashMap<>();
     private final Mono<Void> restored;
 
     public BlindStateTracker(final BlindStateRepository repository, final Clock clock) {
@@ -81,9 +88,12 @@ public class BlindStateTracker {
      * A command of this service is about to go out: the movement it starts is attributed to its
      * source. Noted before it is sent - a device may report the movement before it answers - and
      * kept when the call fails: a command that timed out may have moved the blind all the same.
+     *
+     * @param stop whether the command stops the blind - only such a command explains the rest that
+     *             ends a movement; any other leaves that rest to whoever started the movement
      */
-    public void commanded(final Blind blind, final CommandSource source) {
-        commands.put(blind.id(), new Command(source.value(), Instant.now(clock)));
+    public void commanded(final Blind blind, final CommandSource source, final boolean stop) {
+        commands.put(blind.id(), new Command(new PendingCommand(source.value(), stop), Instant.now(clock)));
     }
 
     public Mono<Void> observe(final Blind blind, final BlindReading reading) {
@@ -93,11 +103,15 @@ public class BlindStateTracker {
             final Command command = pendingCommand(blind.id());
             final AtomicReference<BlindStatus> before = new AtomicReference<>();
             final AtomicReference<Decision> decision = new AtomicReference<>();
+            final Sinks.Empty<Void> done = Sinks.empty();
+            final AtomicReference<Sinks.Empty<Void>> last = new AtomicReference<>();
 
+            //the merge and the place of its write in the queue of the blind are taken together
             statuses.compute(blind.id(), (id, previous) -> {
                 final BlindStatus known = previous == null ? BlindStatus.unknown() : previous;
                 before.set(known);
-                decision.set(decide(known, reading, now, command == null ? null : command.source()));
+                decision.set(decide(known, reading, now, command == null ? null : command.pending()));
+                last.set(writes.put(id, done));
                 return decision.get().status();
             });
 
@@ -107,7 +121,11 @@ public class BlindStateTracker {
             if (Boolean.FALSE.equals(before.get().reachable())) {
                 log.info("Blind {} ({}) is reachable again", blind.id(), blind.name());
             }
-            return write(blind, decision.get(), now);
+            //every caller subscribes to what it gets; done is signalled however the write ends,
+            //a cancelled one included, so one write that failed holds up none after it
+            return (last.get() == null ? Mono.<Void>empty() : last.get().asMono())
+                .then(Mono.defer(() -> write(blind, decision.get(), now)))
+                .doFinally(signal -> done.tryEmitEmpty());
         }));
     }
 
@@ -137,36 +155,42 @@ public class BlindStateTracker {
     //rest confirms what is known and fills in what the reading adds - the position of a moving
     //blind, or one the last report did not have.
     //A report at rest without a position (a Gen1 roller that was not calibrated) cannot tell an end
-    //from the middle: after a blind that reported reaching an end it confirms that end
+    //from the middle: after a blind that reported reaching an end it confirms that end - when it
+    //says the blind last moved towards it. A stop action says nothing of the direction, and one
+    //that contradicts the end is a blind stopped on its way back: both are a stop, not the end
     static Decision decide(
         final BlindStatus previous,
         final BlindReading reading,
         final LocalDateTime now,
-        final String commandSource
+        final PendingCommand command
     ) {
-        final BlindState state = reading.state() == BlindState.STOPPED && reading.position() == null
-            && (previous.state() == BlindState.OPEN || previous.state() == BlindState.CLOSED)
-            ? previous.state()
-            : reading.state();
+        final boolean restAtTheEnd = reading.state() == BlindState.STOPPED && reading.position() == null
+            && (previous.state() == BlindState.OPEN && reading.lastDirection() == Direction.OPEN
+                || previous.state() == BlindState.CLOSED && reading.lastDirection() == Direction.CLOSE);
+        final BlindState state = restAtTheEnd ? previous.state() : reading.state();
         final Direction direction = Stream.of(state.direction(), reading.lastDirection(), previous.lastDirection())
             .filter(Objects::nonNull)
             .findFirst()
             .orElse(null);
 
         if (state != previous.state()) {
-            //the rest that ends a movement belongs to whoever started it
+            //the rest that ends a movement belongs to whoever started it - unless a stop of this
+            //service ended it; any other command is left for the movement it starts
             final boolean endOfMovement = previous.state() != null && previous.state().moving() && !state.moving();
-            final String source = commandSource != null ? commandSource
-                : endOfMovement ? previous.source()
-                : deviceSource(reading);
-            return changed(state, reading.position(), direction, now, source, commandSource != null);
+            if (endOfMovement) {
+                final boolean stopped = command != null && command.stop();
+                return changed(state, reading.position(), direction, now,
+                    stopped ? command.source() : previous.source(), stopped);
+            }
+            return changed(state, reading.position(), direction, now,
+                command != null ? command.source() : deviceSource(reading), command != null);
         }
 
         final boolean movedUnseen = !state.moving() && previous.position() != null && reading.position() != null
             && !previous.position().equals(reading.position());
         if (movedUnseen) {
             return changed(state, reading.position(), direction, now,
-                commandSource != null ? commandSource : deviceSource(reading), commandSource != null);
+                command != null ? command.source() : deviceSource(reading), command != null);
         }
 
         return new Decision(new BlindStatus(
@@ -239,6 +263,10 @@ public class BlindStateTracker {
     record Decision(BlindStatus status, boolean changed, boolean commandUsed) {
     }
 
-    private record Command(String source, Instant at) {
+    //a command of this service that is still waiting for the change it starts
+    record PendingCommand(String source, boolean stop) {
+    }
+
+    private record Command(PendingCommand pending, Instant at) {
     }
 }

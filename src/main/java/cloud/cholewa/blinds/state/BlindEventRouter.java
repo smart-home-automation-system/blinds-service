@@ -9,6 +9,7 @@ import cloud.cholewa.shelly.codec.ShellyEvent;
 import cloud.cholewa.shelly.codec.ShellyMqttDecoder;
 import cloud.cholewa.shelly.codec.ShellyTopic;
 import cloud.cholewa.shelly.model.CoverStatus;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -23,10 +24,12 @@ import java.util.List;
 //- eaton.blinds.<point>: the DeviceEvent of amx-service (HAS-229); only its status is a state. The
 //  group point 26 (ALL) is not registered, so amx-service publishes nothing for it - and the
 //  actuator of the cinema reports on it too, so it could not stand for every blind anyway
-//- <deviceId>.status.cover:<channel> and <deviceId>.online of a Gen2+ blind, decoded by shelly-client.
+//- <deviceId>.status.cover:<channel> and <deviceId>.online of a Gen2+ blind, decoded by shelly-client;
+//  the id matched whatever its case - one copied from the page of the device may be upper case.
 //A body that is not what its topic carries is an error for the consumer to log
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class BlindEventRouter {
 
     private static final String EATON_BLINDS = "eaton.blinds.";
@@ -36,18 +39,6 @@ public class BlindEventRouter {
     private final BlindStateTracker blindStateTracker;
     private final ShellyMqttDecoder shellyMqttDecoder;
     private final JsonMapper jsonMapper;
-
-    public BlindEventRouter(
-        final BlindRegistry blindRegistry,
-        final BlindStateTracker blindStateTracker,
-        final ShellyMqttDecoder shellyMqttDecoder,
-        final JsonMapper jsonMapper
-    ) {
-        this.blindRegistry = blindRegistry;
-        this.blindStateTracker = blindStateTracker;
-        this.shellyMqttDecoder = shellyMqttDecoder;
-        this.jsonMapper = jsonMapper;
-    }
 
     public Mono<Void> route(final String routingKey, final byte[] body) {
         if (routingKey == null) {
@@ -82,7 +73,7 @@ public class BlindEventRouter {
     private Mono<Void> shelly(final ShellyTopic topic, final byte[] body) {
         final List<Blind> blinds = blindRegistry.current().stream()
             .filter(blind -> blind.binding() instanceof BlindBinding.ShellyGen2 cover
-                && topic.deviceId().equals(cover.deviceId()))
+                && topic.deviceId().equalsIgnoreCase(cover.deviceId()))
             .toList();
         if (blinds.isEmpty()) {
             return Mono.empty();

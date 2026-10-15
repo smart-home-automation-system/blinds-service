@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -63,7 +64,7 @@ class BlindsCommandServiceTest {
         //noted before it goes out: the device may report the movement before it answers
         final InOrder order = inOrder(protection, tracker, driver);
         order.verify(protection).check(KITCHEN, CommandSource.SCHEDULE);
-        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE);
+        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE, false);
         order.verify(driver).move(KITCHEN, BlindCommand.CLOSE);
     }
 
@@ -96,7 +97,7 @@ class BlindsCommandServiceTest {
             .verify();
 
         assertThat(called).isFalse();
-        verify(tracker, never()).commanded(any(), any());
+        verify(tracker, never()).commanded(any(), any(), anyBoolean());
     }
 
     @Test

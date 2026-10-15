@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
 import java.time.Clock;
@@ -24,12 +25,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -116,17 +120,63 @@ class BlindStateTrackerTest {
     //a Gen1 roller without calibration reports "stop" at an end it reported reaching a moment ago
     @Test
     void should_take_a_rest_without_a_position_as_the_end_the_blind_reached() {
-        final BlindStateTracker.Decision decision = BlindStateTracker.decide(
-            known(BlindState.OPEN, null, Direction.OPEN), reading(BlindState.STOPPED, null, null), NOW, null);
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(known(BlindState.OPEN, null, Direction.OPEN),
+            new BlindReading(BlindState.STOPPED, null, Direction.OPEN, "http"), NOW, null);
 
         assertThat(decision.changed()).isFalse();
         assertThat(decision.status().state()).isEqualTo(BlindState.OPEN);
     }
 
+    //the roller_stop_url action: stopped anywhere, the direction is not in it
+    @Test
+    void should_take_a_stop_action_after_an_end_as_a_stop() {
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(known(BlindState.OPEN, null, Direction.OPEN),
+            new BlindReading(BlindState.STOPPED, null, null, null), NOW, null);
+
+        assertThat(decision.changed()).isTrue();
+        assertThat(decision.status().state()).isEqualTo(BlindState.STOPPED);
+    }
+
+    //closed halfway between two polls: the rest is not the open end any more
+    @Test
+    void should_take_a_rest_that_moved_away_from_the_end_as_a_stop() {
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(known(BlindState.OPEN, null, Direction.OPEN),
+            new BlindReading(BlindState.STOPPED, null, Direction.CLOSE, "http"), NOW, null);
+
+        assertThat(decision.changed()).isTrue();
+        assertThat(decision.status().state()).isEqualTo(BlindState.STOPPED);
+        assertThat(decision.status().lastDirection()).isEqualTo(Direction.CLOSE);
+    }
+
+    //a wall button closes, the dashboard opens: the stop of the button's movement is the button's,
+    //and the command waits for the movement it starts
+    @Test
+    void should_leave_a_command_other_than_stop_for_the_movement_it_starts() {
+        final BlindStatus closing = new BlindStatus(BlindState.CLOSING, null, Direction.CLOSE, NOW.minusSeconds(5), "external", true);
+
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(closing,
+            new BlindReading(BlindState.STOPPED, null, null, null), NOW, new BlindStateTracker.PendingCommand("dashboard", false));
+
+        assertThat(decision.status().source()).isEqualTo("external");
+        assertThat(decision.commandUsed()).isFalse();
+    }
+
+    @Test
+    void should_give_the_rest_a_stop_command_ended_to_the_command() {
+        final BlindStatus closing = new BlindStatus(BlindState.CLOSING, null, Direction.CLOSE, NOW.minusSeconds(5), "external", true);
+
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(closing,
+            new BlindReading(BlindState.STOPPED, null, null, null), NOW, new BlindStateTracker.PendingCommand("schedule", true));
+
+        assertThat(decision.status().source()).isEqualTo("schedule");
+        assertThat(decision.commandUsed()).isTrue();
+    }
+
     @Test
     void should_give_the_movement_of_a_command_the_source_of_the_command() {
         final BlindStateTracker.Decision decision = BlindStateTracker.decide(
-            known(BlindState.CLOSED, 0, Direction.CLOSE), reading(BlindState.OPENING, 5, "HTTP_in"), NOW, "schedule");
+            known(BlindState.CLOSED, 0, Direction.CLOSE), reading(BlindState.OPENING, 5, "HTTP_in"), NOW,
+            new BlindStateTracker.PendingCommand("schedule", false));
 
         assertThat(decision.status().source()).isEqualTo("schedule");
         assertThat(decision.commandUsed()).isTrue();
@@ -247,11 +297,45 @@ class BlindStateTrackerTest {
         StepVerifier.create(tracker.status(53).map(BlindStatus::state)).expectNext(BlindState.CLOSING).verifyComplete();
     }
 
+    //the latest row is what a restart reads back: a change must not overtake the one before it
+    @Test
+    void should_write_the_rows_of_a_blind_in_the_order_of_the_changes() {
+        final Sinks.Empty<Void> firstStored = Sinks.empty();
+        final List<BlindState> stored = new CopyOnWriteArrayList<>();
+        doAnswer(invocation -> {
+            final BlindStateEntity row = invocation.getArgument(0);
+            stored.add(row.state());
+            return row.state() == BlindState.CLOSING ? firstStored.asMono().thenReturn(row) : Mono.just(row);
+        }).when(repository).save(any());
+
+        tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)).subscribe();
+        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)))
+            .expectSubscription()
+            .then(() -> {
+                assertThat(stored).containsExactly(BlindState.CLOSING);
+                firstStored.tryEmitEmpty();
+            })
+            .verifyComplete();
+
+        assertThat(stored).containsExactly(BlindState.CLOSING, BlindState.CLOSED);
+    }
+
+    @Test
+    void should_not_hold_the_next_write_up_after_one_that_failed() {
+        doReturn(Mono.error(new IllegalStateException("no connection")), Mono.just(entityOf(BlindState.CLOSED)))
+            .when(repository).save(any());
+
+        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)))
+            .expectError(IllegalStateException.class)
+            .verify();
+        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+    }
+
     // ---- who moved it
 
     @Test
     void should_attribute_the_next_change_to_a_command_once() {
-        tracker.commanded(DOOR, CommandSource.DASHBOARD);
+        tracker.commanded(DOOR, CommandSource.DASHBOARD, false);
         clock.move(Duration.ofSeconds(2));
         StepVerifier.create(tracker.observe(DOOR, reading(BlindState.OPENING, 10, "HTTP_in"))).verifyComplete();
         StepVerifier.create(tracker.observe(DOOR, reading(BlindState.OPEN, 100, "limit_switch"))).verifyComplete();
@@ -265,7 +349,7 @@ class BlindStateTrackerTest {
 
     @Test
     void should_not_attribute_a_change_long_after_the_command() {
-        tracker.commanded(DOOR, CommandSource.SCHEDULE);
+        tracker.commanded(DOOR, CommandSource.SCHEDULE, false);
         clock.move(BlindStateTracker.COMMAND_WINDOW.plusSeconds(1));
         StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "button"))).verifyComplete();
 
@@ -302,6 +386,10 @@ class BlindStateTrackerTest {
             .expectNext(new BlindStatus(BlindState.CLOSED, 0, null, NOW, "external", false))
             .verifyComplete();
         verify(repository).save(eq(new BlindStateEntity(null, 53, BlindState.CLOSED, 0, null, "external", NOW, NOW)));
+    }
+
+    private static BlindStateEntity entityOf(final BlindState state) {
+        return new BlindStateEntity(1L, 53, state, null, null, "external", NOW, NOW);
     }
 
     private static BlindStatus known(final BlindState state, final Integer position, final Direction direction) {

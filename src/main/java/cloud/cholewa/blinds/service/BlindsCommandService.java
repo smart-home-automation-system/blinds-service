@@ -43,7 +43,7 @@ public class BlindsCommandService {
 
     public Mono<Void> moveTo(final long id, final int position, final CommandSource source) {
         return blindRegistry.find(id).flatMap(blind -> blind.positioning()
-            ? execute(blind, source, "go to " + position, driver -> driver.moveTo(blind, position))
+            ? execute(blind, source, "go to " + position, false, driver -> driver.moveTo(blind, position))
             : Mono.error(BlindsException.unsupportedPosition(blind)));
     }
 
@@ -87,20 +87,21 @@ public class BlindsCommandService {
     }
 
     private Mono<Void> move(final Blind blind, final BlindCommand command, final CommandSource source) {
-        return execute(blind, source, command.value(), driver -> driver.move(blind, command));
+        return execute(blind, source, command.value(), command == BlindCommand.STOP, driver -> driver.move(blind, command));
     }
 
     private Mono<Void> execute(
         final Blind blind,
         final CommandSource source,
         final String what,
+        final boolean stop,
         final Function<BlindsDriver, Mono<Void>> call
     ) {
         return protectionGuard.check(blind, source)
             .then(Mono.defer(() -> {
                 log.info("Blind {} ({}, {}) asked to {} by {}",
                     blind.id(), blind.name(), blind.room().getValue(), what, source.value());
-                blindStateTracker.commanded(blind, source);
+                blindStateTracker.commanded(blind, source, stop);
                 return call.apply(blindsDrivers.of(blind));
             }))
             .onErrorMap(e -> !(e instanceof BlindsException), e -> BlindsException.deviceFailed(blind, e));

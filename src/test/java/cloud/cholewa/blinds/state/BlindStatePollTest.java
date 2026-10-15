@@ -117,6 +117,16 @@ class BlindStatePollTest {
         verify(gen1, never()).status(anyString());
     }
 
+    //MQTT says whether a cover is there: one failed HTTP call next to it would only make it flap
+    @Test
+    void should_leave_the_reachability_of_a_cover_to_mqtt_when_the_reconciliation_fails() {
+        when(rpc.coverStatus("10.0.0.50", 0)).thenReturn(Mono.error(new ShellyCallException("timed out")));
+
+        StepVerifier.create(poll.reconcileGen2()).verifyComplete();
+
+        verify(tracker, never()).reachability(any(), anyBoolean(), any());
+    }
+
     //Spring subscribes again to the same Mono for every run: each run reads the registry anew
     @Test
     void should_build_every_pass_anew() {
