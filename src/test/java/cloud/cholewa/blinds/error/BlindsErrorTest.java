@@ -14,6 +14,6 @@ class BlindsErrorTest {
     void should_keep_the_codes_callers_branch_on() {
         assertThat(Arrays.stream(BlindsError.values()).map(ErrorId::codeOf))
             .containsExactly("NOT_FOUND_BLINDS", "UNSUPPORTED_POSITION", "PROTECTION_ACTIVE", "DEVICE_FAILED",
-                "REGISTRY_UNAVAILABLE");
+                "REGISTRY_UNAVAILABLE", "INVALID_SCHEDULE", "NOT_FOUND_SCHEDULE");
     }
 }

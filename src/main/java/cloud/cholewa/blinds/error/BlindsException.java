@@ -39,6 +39,14 @@ public class BlindsException extends RuntimeException {
         );
     }
 
+    public static BlindsException invalidSchedule(final String reason) {
+        return new BlindsException(HttpStatus.BAD_REQUEST, BlindsError.INVALID_SCHEDULE, reason);
+    }
+
+    public static BlindsException scheduleNotFound(final long id) {
+        return new BlindsException(HttpStatus.NOT_FOUND, BlindsError.NOT_FOUND_SCHEDULE, "no schedule with id " + id);
+    }
+
     public static BlindsException registryUnavailable(final Throwable cause) {
         return new BlindsException(
             HttpStatus.BAD_GATEWAY,
