@@ -458,6 +458,19 @@ class BlindStateTrackerTest {
         assertThat(tracker.awaitingMovement(KITCHEN, second)).isTrue();
     }
 
+    //found in review: a close, an open at once, the open confirmed - the close is not reported
+    //unconfirmed two minutes later, once nothing newer waits any more
+    @Test
+    void should_never_report_a_replaced_command_unconfirmed() {
+        final IssuedCommand close = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        final IssuedCommand open = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN);
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(1).orElseThrow()).as(StepVerifier::create).verifyComplete();
+        clock.move(BlindStateTracker.COMMAND_WINDOW);
+
+        assertThat(tracker.unconfirmed(KITCHEN, open)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, close)).isFalse();
+    }
+
     //a Shelly reports its movement and its position itself: no wait, no lone stop read as an end
     @Test
     void should_wait_for_no_movement_of_a_blind_other_than_eaton() {

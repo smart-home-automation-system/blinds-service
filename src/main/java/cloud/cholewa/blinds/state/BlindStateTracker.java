@@ -106,7 +106,11 @@ public class BlindStateTracker {
     ) {
         final Direction expected = blind.binding() instanceof BlindBinding.Eaton ? direction : null;
         final IssuedCommand command = new IssuedCommand(source.value(), stop, expected, Instant.now(clock));
-        commands.put(blind.id(), command);
+        final IssuedCommand replaced = commands.put(blind.id(), command);
+        //the newer command takes the wait over: the older one is never reported unconfirmed
+        if (replaced != null) {
+            replaced.settle();
+        }
         return command;
     }
 
@@ -130,7 +134,7 @@ public class BlindStateTracker {
         }
         commands.remove(blind.id(), command);
         //settled here too, so a command is reported once
-        return command.settle() && !commands.containsKey(blind.id());
+        return command.settle();
     }
 
     public Mono<Void> observe(final Blind blind, final BlindReading reading) {
