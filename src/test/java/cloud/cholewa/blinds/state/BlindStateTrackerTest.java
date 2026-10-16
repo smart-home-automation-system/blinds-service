@@ -9,6 +9,7 @@ import cloud.cholewa.blinds.model.BlindState;
 import cloud.cholewa.blinds.model.BlindStatus;
 import cloud.cholewa.blinds.model.CommandSource;
 import cloud.cholewa.blinds.model.Direction;
+import cloud.cholewa.blinds.state.BlindStateTracker.IssuedCommand;
 import cloud.cholewa.home.model.BlindsPlacement;
 import cloud.cholewa.home.model.RoomName;
 import cloud.cholewa.home.model.SmartVendor;
@@ -49,6 +50,8 @@ class BlindStateTrackerTest {
 
     private static final Blind DOOR = new Blind(53, "Office door", RoomName.OFFICE, SmartVendor.SHELLY,
         new BlindBinding.ShellyGen2("10.0.0.50", 0, "shellyplus2pm-a1"), BlindsPlacement.EXTERNAL, true);
+    private static final Blind KITCHEN = new Blind(9, "Kitchen", RoomName.KITCHEN, SmartVendor.EATON,
+        new BlindBinding.Eaton(9), BlindsPlacement.EXTERNAL, false);
 
     private final MovableClock clock = new MovableClock(START);
     private final BlindStateRepository repository = mock(BlindStateRepository.class);
@@ -335,7 +338,7 @@ class BlindStateTrackerTest {
 
     @Test
     void should_attribute_the_next_change_to_a_command_once() {
-        tracker.commanded(DOOR, CommandSource.DASHBOARD, false);
+        tracker.commanded(DOOR, CommandSource.DASHBOARD, false, Direction.OPEN);
         clock.move(Duration.ofSeconds(2));
         tracker.observe(DOOR, reading(BlindState.OPENING, 10, "HTTP_in")).as(StepVerifier::create).verifyComplete();
         tracker.observe(DOOR, reading(BlindState.OPEN, 100, "limit_switch")).as(StepVerifier::create).verifyComplete();
@@ -349,11 +352,120 @@ class BlindStateTrackerTest {
 
     @Test
     void should_not_attribute_a_change_long_after_the_command() {
-        tracker.commanded(DOOR, CommandSource.SCHEDULE, false);
+        tracker.commanded(DOOR, CommandSource.SCHEDULE, false, Direction.CLOSE);
         clock.move(BlindStateTracker.COMMAND_WINDOW.plusSeconds(1));
         tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "button")).as(StepVerifier::create).verifyComplete();
 
         tracker.status(53).map(BlindStatus::source).as(StepVerifier::create).expectNext("button").verifyComplete();
+    }
+
+    // ---- an Eaton movement whose start was never reported (HAS-291)
+
+    //the kitchen of 2026-10-16: closed on a command, only the final 00 arrived, and the blind
+    //still showed the direction of the movement before
+    @Test
+    void should_take_a_lone_stop_after_a_close_as_closed_by_the_command() {
+        final BlindStatus openedBefore = known(BlindState.STOPPED, null, Direction.OPEN);
+
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(openedBefore,
+            new BlindReading(BlindState.STOPPED, null, null, null), NOW,
+            new BlindStateTracker.PendingCommand("dashboard", false, Direction.CLOSE));
+
+        assertThat(decision.changed()).isTrue();
+        assertThat(decision.commandUsed()).isTrue();
+        assertThat(decision.status()).isEqualTo(
+            new BlindStatus(BlindState.STOPPED, null, Direction.CLOSE, NOW, "dashboard", true));
+    }
+
+    //the answer to the status request: the movement, with the source of the command
+    @Test
+    void should_take_a_status_answer_02_as_closing_by_the_command() {
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(
+            known(BlindState.STOPPED, null, Direction.OPEN), BlindReadings.ofEatonStatus(2).orElseThrow(), NOW,
+            new BlindStateTracker.PendingCommand("dashboard", false, Direction.CLOSE));
+
+        assertThat(decision.commandUsed()).isTrue();
+        assertThat(decision.status()).isEqualTo(
+            new BlindStatus(BlindState.CLOSING, null, Direction.CLOSE, NOW, "dashboard", true));
+    }
+
+    //a stop command keeps its own meaning: the rest it ends says nothing of a direction
+    @Test
+    void should_not_read_a_direction_into_the_rest_after_a_stop_command() {
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(
+            known(BlindState.STOPPED, null, Direction.OPEN), new BlindReading(BlindState.STOPPED, null, null, null), NOW,
+            new BlindStateTracker.PendingCommand("dashboard", true, null));
+
+        assertThat(decision.status().lastDirection()).isEqualTo(Direction.OPEN);
+    }
+
+    @Test
+    void should_end_the_movement_of_an_eaton_command_with_a_lone_stop_and_attribute_it_once() {
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        clock.move(Duration.ofSeconds(30));
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(0).orElseThrow()).as(StepVerifier::create).verifyComplete();
+
+        tracker.status(9).as(StepVerifier::create)
+            .expectNext(new BlindStatus(BlindState.STOPPED, null, Direction.CLOSE, NOW.plusSeconds(30), "dashboard", true))
+            .verifyComplete();
+        assertThat(tracker.awaitingMovement(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+    }
+
+    //nothing at all within the window: unconfirmed, and the state is what it was
+    @Test
+    void should_leave_the_state_of_a_command_nothing_confirmed() {
+        tracker.observe(KITCHEN, new BlindReading(BlindState.STOPPED, null, Direction.OPEN, null))
+            .as(StepVerifier::create).verifyComplete();
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.SCHEDULE, false, Direction.CLOSE);
+
+        assertThat(tracker.awaitingMovement(KITCHEN, issued)).isTrue();
+        clock.move(BlindStateTracker.COMMAND_WINDOW);
+        assertThat(tracker.unconfirmed(KITCHEN, issued)).isTrue();
+
+        tracker.status(9).map(BlindStatus::lastDirection).as(StepVerifier::create).expectNext(Direction.OPEN).verifyComplete();
+        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+    }
+
+    @Test
+    void should_stop_waiting_once_the_movement_is_reported() {
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN);
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(1).orElseThrow()).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.awaitingMovement(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+    }
+
+    //a movement the state already had: nothing changes, and still the command has its answer
+    @Test
+    void should_take_a_movement_the_state_already_had_as_the_answer() {
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(2).orElseThrow()).as(StepVerifier::create).verifyComplete();
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(2).orElseThrow()).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.awaitingMovement(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+    }
+
+    //a newer command takes the place of the older one: only the newer one is waited for
+    @Test
+    void should_wait_for_the_latest_command_only() {
+        final IssuedCommand first = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        final IssuedCommand second = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN);
+
+        assertThat(tracker.awaitingMovement(KITCHEN, first)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, first)).isFalse();
+        assertThat(tracker.awaitingMovement(KITCHEN, second)).isTrue();
+    }
+
+    //a Shelly reports its movement and its position itself: no wait, no lone stop read as an end
+    @Test
+    void should_wait_for_no_movement_of_a_blind_other_than_eaton() {
+        final IssuedCommand issued = tracker.commanded(DOOR, CommandSource.DASHBOARD, false, Direction.CLOSE);
+
+        assertThat(issued.expectsMovement()).isFalse();
+        assertThat(tracker.awaitingMovement(DOOR, issued)).isFalse();
+        assertThat(tracker.unconfirmed(DOOR, issued)).isFalse();
     }
 
     // ---- reachability

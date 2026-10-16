@@ -43,6 +43,22 @@ public class EatonDriver implements BlindsDriver {
             .then();
     }
 
+    //asks the actuator for its state (HAS-291): POST .../blinds/{point}/status of amx-service, which
+    //sends 0B. The answer arrives as the usual status event, not in this call
+    public Mono<Void> requestStatus(final Blind blind) {
+        final BlindBinding.Eaton eaton = (BlindBinding.Eaton) blind.binding();
+
+        return amxWebClient
+            .post()
+            .uri("/home/amx/eaton/blinds/{point}/status", eaton.point())
+            .retrieve()
+            .onStatus(HttpStatusCode::isError, response -> DownstreamErrors.read(response)
+                .map(error -> new AmxCallException(
+                    "amx-service answered " + error.status().value() + " " + error.errors())))
+            .toBodilessEntity()
+            .then();
+    }
+
     @Override
     public Mono<Void> moveTo(final Blind blind, final int position) {
         return Mono.error(() -> BlindsException.unsupportedPosition(blind));

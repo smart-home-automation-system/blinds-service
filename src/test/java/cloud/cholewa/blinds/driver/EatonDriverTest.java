@@ -61,6 +61,36 @@ class EatonDriverTest {
         assertThat(request.getUrl().queryParameter("command")).isEqualTo(parameter);
     }
 
+    //HAS-291: the path of its own, no command - amx-service sends 0B
+    @Test
+    void should_ask_amx_service_for_the_status_of_the_point() throws InterruptedException {
+        server.enqueue(new MockResponse.Builder().code(202)
+            .addHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .body("{\"sentAt\":\"2026-10-17T10:06:44\"}").build());
+
+        driver.requestStatus(KITCHEN).as(StepVerifier::create).verifyComplete();
+
+        final RecordedRequest request = server.takeRequest();
+        assertThat(request.getMethod()).isEqualTo("POST");
+        assertThat(request.getUrl().encodedPath()).isEqualTo("/home/amx/eaton/blinds/9/status");
+        assertThat(request.getUrl().query()).isNull();
+    }
+
+    @Test
+    void should_fail_a_status_request_with_the_status_and_the_codes_of_amx_service() {
+        server.enqueue(new MockResponse.Builder().code(404)
+            .addHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .body("{\"errors\":[{\"message\":\"Device not found\",\"code\":\"NOT_FOUND_DEVICE\"}]}")
+            .build());
+
+        driver.requestStatus(KITCHEN).as(StepVerifier::create)
+            .expectErrorSatisfies(e -> assertThat(e)
+                .isInstanceOf(EatonDriver.AmxCallException.class)
+                .hasMessageContaining("amx-service answered 404")
+                .hasMessageContaining("NOT_FOUND_DEVICE"))
+            .verify();
+    }
+
     //the frame may have gone out or not - either way the command is failed, and the codes go to the log
     @Test
     void should_fail_with_the_status_and_the_codes_of_amx_service() {
