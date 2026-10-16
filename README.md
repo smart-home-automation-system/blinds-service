@@ -66,7 +66,13 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   - an **Eaton actuator** reports its status through `amx-service` (`eaton.blinds.<point>`):
     `1` opening, `2` closing, `0` stopped. That is its last movement — it never says where it
     stopped, so an Eaton blind has no position, and no `open` or `closed`. The group point 26
-    (ALL) is not read.
+    (ALL) is not read. **An actuator does not always get the status of its start through**
+    (HAS-291): when an open or a close of this service is followed by no movement within
+    `blinds.eaton.confirm-after` (5 s), the actuator is asked for its status once
+    (`POST /home/amx/eaton/blinds/{point}/status` of `amx-service`) and its answer is the
+    movement. A stop that arrives within two minutes of such a command, with no movement
+    reported in between, is the end of a movement in the commanded direction. When nothing at
+    all arrives the command is unconfirmed: a WARN in the log, the state left as it was.
 - **Who moved it** (`source`): a movement seen within two minutes of a command of this service
   takes the command's `source`; the rest that ends a movement keeps the source of that
   movement; otherwise it is the word of the Shelly device (`SHC` for the app, `button`,
@@ -103,6 +109,8 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   `test` — they are not in the public configuration, the manifest gives them.
 - The other services are called on their local ports: `database-service` 6005,
   `weather-service` 6010, `amx-service` 6001.
+- `blinds.eaton.confirm-after` (default `PT5S`, 1 to 60 s, a bare number is seconds): how long
+  the start of an Eaton movement is waited for before the actuator is asked for its status.
 - The database connection properties (`database-host`, `database-port`, `database-name`,
   `database-user`, `database-password`) are bound to the `database.*` prefix that
   `cholewa-commons` consumes; Flyway derives its JDBC URL from them (`--flyway-url=...`

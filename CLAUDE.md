@@ -22,7 +22,7 @@ review.
   (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
 - Uses libraries: `cholewa-commons` 1.9.0 (pool, error contract, connection names,
-  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.9.0 (`SmartDevice` of
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.10.0 (`SmartDevice` of
   the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.1.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
 - Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
@@ -88,6 +88,23 @@ review.
   - Eaton: the `status` event of `amx-service` (`0` stop, `1` open, `2` close), no position.
     The group point 26 is deliberately not read: it is unregistered, and the cinema actuator
     (12) reports on it too.
+- **An Eaton movement is confirmed, not assumed** (HAS-291): the `70` of a start may be lost
+  (the kitchen, 2026-10-16: only the final `00` arrived), and the gateway's `C3 1C 04` proves
+  nothing about the actuator.
+  - `commanded(blind, source, stop, direction)` returns the `IssuedCommand`; only an open or a
+    close of an Eaton blind waits for a movement (`expectsMovement`). `EatonMoveConfirmation`
+    asks the tracker about **that object**, so a newer command is told apart; a replaced
+    command is settled at once and never reported.
+  - After `blinds.eaton.confirm-after` (`EatonProperties`, `PT5S`, 1–60 s) without a movement,
+    one status request through `amx-service` (`EatonDriver.requestStatus`); its answer is the
+    usual status event. A failed request is a WARN - never repeated.
+  - `decide()`: a `00` without a position while the command still `expected` a direction is the
+    end of a movement that way, with the command's source. A stop command keeps its meaning.
+    A status answer `00` from an actuator that never got the command reads the same - accepted
+    in the task; HAS-250 may refine it.
+  - Nothing within `COMMAND_WINDOW`: `unconfirmed()` once, a WARN, the state untouched.
+  - The wait is a `Mono.delay` chain subscribed in `start()` with `.contextCapture()` (the
+    `traceId` of the command) and an error consumer; a restart forgets the waits.
 - **The state reads leave out what is not known** (`BlindView`, `NON_NULL`): no state before
   the first report, no position from an Eaton blind, no `reachable` after a restart.
   `protection` comes with HAS-249, `lastCommandConfirmed` with HAS-250.
