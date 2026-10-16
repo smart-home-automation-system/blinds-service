@@ -57,7 +57,7 @@ class BlindsQueryServiceTest {
         when(tracker.status(53)).thenReturn(Mono.just(
             new BlindStatus(BlindState.CLOSED, 0, Direction.CLOSE, MOVED, "SHC", true)));
 
-        StepVerifier.create(service.all())
+        service.all().as(StepVerifier::create)
             .assertNext(rooms -> {
                 assertThat(rooms).extracting(RoomBlinds::room).containsExactly("office", "kitchen");
                 assertThat(rooms.get(0).blinds()).extracting(BlindView::id).containsExactly(52L, 53L);
@@ -71,7 +71,7 @@ class BlindsQueryServiceTest {
     void should_store_an_action_of_a_gen1_roller() {
         when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
 
-        StepVerifier.create(service.gen1Action(52, Gen1Action.CLOSE)).verifyComplete();
+        service.gen1Action(52, Gen1Action.CLOSE).as(StepVerifier::create).verifyComplete();
 
         verify(tracker).observe(OFFICE_WINDOW, new BlindReading(BlindState.CLOSED, 0, Direction.CLOSE, null));
     }
@@ -81,7 +81,7 @@ class BlindsQueryServiceTest {
     void should_refuse_an_action_of_a_blind_that_is_not_a_gen1_roller() {
         when(registry.find(53)).thenReturn(Mono.just(OFFICE_DOOR));
 
-        StepVerifier.create(service.gen1Action(53, Gen1Action.OPEN))
+        service.gen1Action(53, Gen1Action.OPEN).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.NOT_FOUND_BLINDS))
             .verify();
 
@@ -94,7 +94,7 @@ class BlindsQueryServiceTest {
         when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
         when(tracker.observe(any(), any())).thenReturn(Mono.error(new IllegalStateException("no connection")));
 
-        StepVerifier.create(service.gen1Action(52, Gen1Action.STOP)).verifyComplete();
+        service.gen1Action(52, Gen1Action.STOP).as(StepVerifier::create).verifyComplete();
     }
 
     private static Blind blind(final long id, final RoomName room, final BlindBinding binding) {

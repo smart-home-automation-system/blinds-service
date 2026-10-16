@@ -22,8 +22,8 @@ spring:
     # amx-service, all on amq.topic of /device, each queue bound with "#"
     username: device
     # no default on purpose: with one the pod would start, turn Ready and consume nothing.
-    # Without the variable the service does not start - BrokerPasswordCheck sees to that, the
-    # binder alone would take the placeholder for the password
+    # Without the variable the service does not start - cholewa.required-properties sees to that,
+    # the binder alone would take the placeholder for the password
     password: ${rabbitmq-password}
     virtual-host: /device
     connection-timeout: 10s
@@ -104,7 +104,7 @@ notification:
   virtual-host: /notification
   username: notification
   # no default on purpose: with one the pod would start, turn Ready and fail every publish.
-  # Without the variable the service does not start (BrokerPasswordCheck)
+  # Without the variable the service does not start (cholewa.required-properties)
   password: ${notification-rabbitmq-password}
   exchange: notification
   env: prod
@@ -129,6 +129,26 @@ internal:
       url: http://amx-service:6200
       connect-timeout: 3s
       response-timeout: 10s
+
+# where the house is, for the sunrise and the sunset of the schedules - given by the manifest, not
+# written into this public file, and without a default: the service does not start without it
+blinds:
+  location:
+    latitude: ${location-latitude}
+    longitude: ${location-longitude}
+
+# what has no default in this document: a pod without one of them does not start (cholewa-commons,
+# checked before the first bean is created)
+cholewa:
+  required-properties:
+    - property: spring.rabbitmq.password
+      variable: rabbitmq-password
+    - property: notification.password
+      variable: notification-rabbitmq-password
+    - property: blinds.location.latitude
+      variable: location-latitude
+    - property: blinds.location.longitude
+      variable: location-longitude
 
 ---
 
@@ -211,6 +231,12 @@ internal:
       url: http://localhost:1
     amx:
       url: http://localhost:1
+
+# a place in Poland, not the house
+blinds:
+  location:
+    latitude: 50.0
+    longitude: 20.0
 
 logbook:
   format:

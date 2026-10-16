@@ -35,12 +35,12 @@ class BlindRegistryTest {
     void should_know_the_blinds_of_the_last_refresh() {
         when(client.getBlinds()).thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9), eaton(18, RoomName.KITCHEN, 10))));
 
-        StepVerifier.create(registry.refresh()).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(registry.find(18))
+        registry.find(18).as(StepVerifier::create)
             .assertNext(blind -> assertThat(blind.id()).isEqualTo(18))
             .verifyComplete();
-        StepVerifier.create(registry.inRoom(RoomName.KITCHEN))
+        registry.inRoom(RoomName.KITCHEN).as(StepVerifier::create)
             .assertNext(blinds -> assertThat(blinds).extracting(Blind::id).containsExactly(17L, 18L))
             .verifyComplete();
     }
@@ -52,10 +52,10 @@ class BlindRegistryTest {
             .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))))
             .thenReturn(Mono.error(new RegistryCallException("database-service answered 500")));
 
-        StepVerifier.create(registry.refresh()).verifyComplete();
-        StepVerifier.create(registry.refresh()).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(registry.find(17)).expectNextCount(1).verifyComplete();
+        registry.find(17).as(StepVerifier::create).expectNextCount(1).verifyComplete();
     }
 
     @Test
@@ -64,10 +64,10 @@ class BlindRegistryTest {
             .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))))
             .thenReturn(Mono.just(List.of()));
 
-        StepVerifier.create(registry.refresh()).verifyComplete();
-        StepVerifier.create(registry.refresh()).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(registry.find(17)).expectError(BlindsException.class).verify();
+        registry.find(17).as(StepVerifier::create).expectError(BlindsException.class).verify();
     }
 
     //a command right after a start must not be refused because the pod came up before database-service
@@ -77,10 +77,10 @@ class BlindRegistryTest {
             .thenReturn(Mono.error(new RegistryCallException("database-service answered 503")))
             .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))));
 
-        StepVerifier.create(registry.refresh()).verifyComplete();
-        StepVerifier.create(registry.find(17)).expectNextCount(1).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
+        registry.find(17).as(StepVerifier::create).expectNextCount(1).verifyComplete();
         //known from now on: no read for the next lookup
-        StepVerifier.create(registry.find(17)).expectNextCount(1).verifyComplete();
+        registry.find(17).as(StepVerifier::create).expectNextCount(1).verifyComplete();
 
         verify(client, times(2)).getBlinds();
     }
@@ -89,10 +89,10 @@ class BlindRegistryTest {
     void should_not_find_a_blind_it_does_not_know() {
         when(client.getBlinds()).thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))));
 
-        StepVerifier.create(registry.find(99))
+        registry.find(99).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.NOT_FOUND_BLINDS))
             .verify();
-        StepVerifier.create(registry.inRoom(RoomName.CINEMA))
+        registry.inRoom(RoomName.CINEMA).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.NOT_FOUND_BLINDS))
             .verify();
     }
@@ -102,14 +102,14 @@ class BlindRegistryTest {
     void should_answer_registry_unavailable_while_the_registry_was_never_read() {
         when(client.getBlinds()).thenReturn(Mono.error(new RegistryCallException("database-service answered 503")));
 
-        StepVerifier.create(registry.find(17))
+        registry.find(17).as(StepVerifier::create)
             .expectErrorSatisfies(e -> {
                 final BlindsException exception = (BlindsException) e;
                 assertThat(exception.getError()).isEqualTo(BlindsError.REGISTRY_UNAVAILABLE);
                 assertThat(exception.getHttpStatus().value()).isEqualTo(502);
             })
             .verify();
-        StepVerifier.create(registry.inRoom(RoomName.KITCHEN))
+        registry.inRoom(RoomName.KITCHEN).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.REGISTRY_UNAVAILABLE))
             .verify();
     }
@@ -124,7 +124,7 @@ class BlindRegistryTest {
         try {
             when(client.getBlinds()).thenReturn(Mono.error(new RegistryCallException("database-service answered 500")));
 
-            StepVerifier.create(registry.refresh()).verifyComplete();
+            registry.refresh().as(StepVerifier::create).verifyComplete();
 
             assertThat(log.list).singleElement().satisfies(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
@@ -148,9 +148,9 @@ class BlindRegistryTest {
                 .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 9))))
                 .thenReturn(Mono.just(List.of(eaton(17, RoomName.KITCHEN, 11))));
 
-            StepVerifier.create(registry.refresh()).verifyComplete();
-            StepVerifier.create(registry.refresh()).verifyComplete();
-            StepVerifier.create(registry.refresh()).verifyComplete();
+            registry.refresh().as(StepVerifier::create).verifyComplete();
+            registry.refresh().as(StepVerifier::create).verifyComplete();
+            registry.refresh().as(StepVerifier::create).verifyComplete();
 
             assertThat(log.list).hasSize(2).allSatisfy(event -> assertThat(event.getLevel()).isEqualTo(Level.INFO));
         } finally {
@@ -163,10 +163,10 @@ class BlindRegistryTest {
         final SmartDevice withoutPoint = eaton(19, RoomName.CINEMA, 12).eaton(new EatonBinding());
         when(client.getBlinds()).thenReturn(Mono.just(Arrays.asList(withoutPoint, null, eaton(17, RoomName.KITCHEN, 9))));
 
-        StepVerifier.create(registry.refresh()).verifyComplete();
+        registry.refresh().as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(registry.find(19)).expectError(BlindsException.class).verify();
-        StepVerifier.create(registry.find(17)).expectNextCount(1).verifyComplete();
+        registry.find(19).as(StepVerifier::create).expectError(BlindsException.class).verify();
+        registry.find(17).as(StepVerifier::create).expectNextCount(1).verifyComplete();
     }
 
     //Spring subscribes to the Mono of the schedule again for every run: the read must happen each time
@@ -175,8 +175,8 @@ class BlindRegistryTest {
         when(client.getBlinds()).thenReturn(Mono.just(List.of()));
         final Mono<Void> refresh = new BlindRegistryRefresh(registry).refresh();
 
-        StepVerifier.create(refresh).verifyComplete();
-        StepVerifier.create(refresh).verifyComplete();
+        refresh.as(StepVerifier::create).verifyComplete();
+        refresh.as(StepVerifier::create).verifyComplete();
 
         verify(client, times(2)).getBlinds();
     }

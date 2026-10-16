@@ -41,7 +41,7 @@ class DeviceRegistryClientTest {
               "eaton":{"gateway":"blinds","point":9},"placement":"external","positioning":false}]
             """));
 
-        StepVerifier.create(client.getBlinds())
+        client.getBlinds().as(StepVerifier::create)
             .assertNext(devices -> assertThat(devices).extracting(SmartDevice::getId, SmartDevice::getRoom)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple(17L, RoomName.KITCHEN)))
             .verifyComplete();
@@ -57,7 +57,7 @@ class DeviceRegistryClientTest {
     void should_read_an_empty_registry_as_no_blinds() {
         server.enqueue(json("[]"));
 
-        StepVerifier.create(client.getBlinds())
+        client.getBlinds().as(StepVerifier::create)
             .assertNext(devices -> assertThat(devices).isEmpty())
             .verifyComplete();
     }
@@ -69,7 +69,7 @@ class DeviceRegistryClientTest {
             .addHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .body("{\"errors\":[{\"message\":\"Internal error\"}]}").build());
 
-        StepVerifier.create(client.getBlinds())
+        client.getBlinds().as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(e)
                 .isInstanceOf(RegistryCallException.class)
                 .hasMessage("database-service answered 500"))
@@ -80,7 +80,7 @@ class DeviceRegistryClientTest {
     void should_fail_on_an_answer_without_a_body() {
         server.enqueue(new MockResponse.Builder().code(200).build());
 
-        StepVerifier.create(client.getBlinds())
+        client.getBlinds().as(StepVerifier::create)
             .expectError(RegistryCallException.class)
             .verify();
     }
@@ -89,7 +89,7 @@ class DeviceRegistryClientTest {
     void should_fail_on_an_answer_that_is_not_a_list() {
         server.enqueue(json("{}"));
 
-        StepVerifier.create(client.getBlinds())
+        client.getBlinds().as(StepVerifier::create)
             .expectError()
             .verify();
     }

@@ -44,11 +44,12 @@
 		<logbook.version>4.2.0</logbook.version>
 		<mapstruct.version>1.6.3</mapstruct.version>
 		<mockwebserver3.version>5.5.0</mockwebserver3.version>
+		<commons-suncalc.version>3.11</commons-suncalc.version>
 
 		<!--  internal dependencies versions-->
-		<cholewa-commons.version>1.8.0</cholewa-commons.version>
+		<cholewa-commons.version>1.9.0</cholewa-commons.version>
 		<smart-home-sdk.version>1.9.0</smart-home-sdk.version>
-		<shelly-client.version>2.0.0</shelly-client.version>
+		<shelly-client.version>2.1.0</shelly-client.version>
 
 		<!--  plugins versions-->
 		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
@@ -73,6 +74,12 @@
 			<groupId>cloud.cholewa</groupId>
 			<artifactId>shelly-client</artifactId>
 			<version>${shelly-client.version}</version>
+		</dependency>
+		<!-- the sunrise and the sunset of the schedules (HAS-247) -->
+		<dependency>
+			<groupId>org.shredzone.commons</groupId>
+			<artifactId>commons-suncalc</artifactId>
+			<version>${commons-suncalc.version}</version>
 		</dependency>
 
 		<dependency>

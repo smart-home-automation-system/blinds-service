@@ -33,9 +33,9 @@ driven through `amx-service`, and Shelly devices.
 
 Since HAS-244 the service **moves the blinds on command**, and since HAS-245 it **knows the
 real state of every blind**, whoever moved it — the Shelly app, a wall button, an AMX panel or
-the service itself. Since HAS-246 it **stores the schedules** the dashboard edits; nothing runs
-them yet (the engine is HAS-247, the overrides of a resident HAS-248), and there is no wind and
-frost protection (HAS-249).
+the service itself. Since HAS-246 it **stores the schedules** the dashboard edits, and since
+HAS-247 **runs them every minute** from the calendar of the house, the sun and the weather.
+There are no overrides of a resident yet (HAS-248), and no wind and frost protection (HAS-249).
 
 Everything is non-blocking (Spring WebFlux / Reactor):
 
@@ -85,13 +85,12 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   `amx-service`, each a `WebClient` over k8s DNS with its own connect and response timeouts
   (`internal.service.*`).
 - **The schedules run in the memory of one instance**: the deployment is `Recreate` and never
-  scaled; scheduling is off under the `test` profile.
+  scaled; scheduling is off under the `test` profile. How they run is under Schedules.
 
 # Run locally
 
-- Build: `mvn verify` (JDK 21) **needs a running Docker**: `BlindStateRepositoryTest` runs the
-  PostgreSQL-only SQL of the state on a PostgreSQL of Testcontainers. Without a Docker it fails,
-  it is not skipped.
+- Build: `mvn verify` (JDK 21) **needs a running Docker**: the repository tests run on a
+  PostgreSQL of Testcontainers. Without a Docker they fail, they are not skipped.
 - Ports: local profile `6011` (management `8011`); in the deployed `home` profile the service
   listens on `6200` and Actuator on `8200` like every service in the cluster. The probes hit
   `/actuator/health/{readiness,liveness}` and Prometheus scrapes `/actuator/prometheus`.
@@ -99,6 +98,9 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   `notification-rabbitmq-password` a local run starts with a dummy password and neither
   consumes nor publishes. In the `home` profile both variables are mandatory — without one
   the service does not start.
+- **The place of the house**, for the sunrise and the sunset: `location-latitude` and
+  `location-longitude` (degrees, north and east positive). Mandatory in every profile but
+  `test` — they are not in the public configuration, the manifest gives them.
 - The other services are called on their local ports: `database-service` 6005,
   `weather-service` 6010, `amx-service` 6001.
 - The database connection properties (`database-host`, `database-port`, `database-name`,
@@ -123,6 +125,7 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
 | `POST` | `/home/blinds/rooms/{room}?command=open\|close\|stop&source=` | Move every blind of a room, one after the other |
 | `GET` | `/home/blinds/schedules` | Every schedule, in the order they were created |
 | `GET` | `/home/blinds/schedules/{id}` | One schedule |
+| `GET` | `/home/blinds/schedules/{id}/today` | What the engine makes of a schedule today (below) |
 | `POST` | `/home/blinds/schedules` | Create a schedule: `201` with the schedule as stored |
 | `PUT` | `/home/blinds/schedules/{id}` | Replace a schedule whole, `enabled` included: `200` with the schedule |
 | `POST` | `/home/blinds/schedules/{id}/enable` \| `/disable` | Switch a schedule on or off without sending the rest: `200` with the schedule |
@@ -176,7 +179,7 @@ server first.
 # Schedules
 
 A schedule moves its targets **once a day**, when **every condition holds inside its window**, on
-the days of its type. It is stored here; the engine that fires it comes with HAS-247.
+the days of its type.
 
 | Field | Values |
 |---|---|
@@ -243,6 +246,74 @@ closed:
 }
 ```
 
+## The engine
+
+Every minute (the first time a minute after the start) every schedule is judged, and one that
+fires moves the blinds of its targets it has not moved today, one after the other, with the
+`source` `schedule`.
+
+- **The day type** comes from `GET /home/calendar/days` of `database-service`, once a day. While
+  the calendar cannot be read the weekday decides — Saturday and Sunday off — with a WARN, and the
+  calendar is asked again after ten minutes.
+- **The window** is resolved for the day: a clock time as it is; a sunrise or a sunset of the
+  house, moved by its offset (but never past midnight) and then held between `earliest` and
+  `latest`. `from` is in the window, `to` is not. A window that ends before it starts passes the
+  day without firing.
+- **The weather** comes from `GET /home/weather/current` of `weather-service` every minute. A
+  metric the answer leaves out, holds `stale`, or measured more than ten minutes ago is
+  **unknown**; so is everything when `weather-service` cannot be read (one WARN, one INFO when
+  it is back). The comparisons are strict: 200 is not `lt` 200.
+- **`window closed` is always unknown for now**: no window sensor exists in the house yet, so a
+  schedule with that condition does not fire.
+- **What is not known never holds**: a schedule that needs an unknown input does not fire; the
+  others do.
+- **A hold** counts from the first minute the condition was seen true, without a break. The holds
+  live in memory: a restart, or a minute the engine could not judge, starts them again — a
+  schedule then fires later, never earlier.
+- **Once a day per blind**: every blind a schedule sent a command to is recorded with what came
+  of it — `moved`, `failed` (it did not take the command, or did not answer — it may have moved
+  all the same) or `unsupported` (a position for a blind without one). A recorded blind is not
+  moved again that day, after a restart either. A blind the protection holds back is not recorded
+  and is tried again the next minute. When the runs of the day cannot be read, nothing fires.
+- A blind named on its own and through its room is moved once; a target the registry does not
+  know moves nothing.
+- Every decision is logged at INFO with its reason when it changes — `Schedule 3 (Evening close):
+  waiting for the conditions, window 17:17-23:00: illuminance lt 200 for 10 min holding`.
+
+`GET /home/blinds/schedules/{id}/today` answers what the engine makes of a schedule now, and
+changes nothing (it reads the weather of the last minute):
+
+```json
+{
+  "scheduleId": 3,
+  "date": "2026-10-16",
+  "dayType": "workday",
+  "dayTypeFromCalendar": true,
+  "runsToday": true,
+  "window": {"from": "17:17", "to": "23:00"},
+  "conditions": [
+    {"metric": "illuminance", "operator": "lt", "threshold": 200, "holdMinutes": 10,
+     "current": 150, "measuredAt": "2026-10-16T17:20:05", "trueSince": "2026-10-16T17:18:00", "state": "holding"}
+  ],
+  "targets": [
+    {"deviceId": 53, "name": "Office door", "room": "office", "firedAt": "2026-10-16T17:28:00", "outcome": "moved"},
+    {"deviceId": 52, "name": "Office window", "room": "office"}
+  ],
+  "decision": "waiting for the conditions"
+}
+```
+
+- `dayTypeFromCalendar` is `false` when the weekday decided. `window` is left out when the day
+  has no such time of the sun.
+- `state` of a condition: `met`, `holding` (true, the hold not over), `not met`, `unknown`;
+  `current`, `measuredAt` and `trueSince` are left out when not known.
+- `targets`: the blinds of the targets, and a blind moved today that the registry no longer
+  knows (without `name` and `room`); `firedAt` and `outcome` once it was moved today.
+- `decision`, the first that applies: `disabled`, `not today`, `no window today`, `fired today`,
+  `before the window`, `after the window`, `no blind of its targets is known`,
+  `waiting for the conditions`, `fires`.
+- `404` `NOT_FOUND_SCHEDULE` for a schedule that does not exist.
+
 # Database
 
 - **Own database** `home-automation-blinds` on the managed PostgreSQL, reactive access via
@@ -265,3 +336,7 @@ closed:
   names of their constants. The targets and conditions keep the order they were given (their
   ids) and go with their schedule (`ON DELETE CASCADE`). The CHECKs repeat what one row can say
   of a schedule.
+- **`blinds_schedule_run`** (`V3`, HAS-247): a blind a schedule sent a command to — `schedule_id`,
+  `device_id`, `fired_on` (the local date), `fired_at`, `outcome` (`MOVED`, `FAILED`,
+  `UNSUPPORTED`). `UNIQUE (schedule_id, device_id, fired_on)`: once a day, whatever the engine
+  remembers. Gone with its schedule; no retention yet - a few rows a day.

@@ -1,6 +1,8 @@
 package cloud.cholewa.blinds.api;
 
+import cloud.cholewa.blinds.engine.ScheduleEngine;
 import cloud.cholewa.blinds.model.schedule.Schedule;
+import cloud.cholewa.blinds.model.schedule.ScheduleToday;
 import cloud.cholewa.blinds.service.schedule.ScheduleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,7 @@ import java.util.List;
 public class BlindsScheduleController {
 
     private final ScheduleService scheduleService;
+    private final ScheduleEngine scheduleEngine;
 
     @GetMapping
     Mono<List<Schedule>> all() {
@@ -36,6 +39,12 @@ public class BlindsScheduleController {
     @GetMapping("/{id}")
     Mono<Schedule> one(@PathVariable final long id) {
         return scheduleService.get(id);
+    }
+
+    //what the engine makes of it today: the window, the conditions, the blinds it moved
+    @GetMapping("/{id}/today")
+    Mono<ScheduleToday> today(@PathVariable final long id) {
+        return scheduleService.get(id).flatMap(scheduleEngine::today);
     }
 
     @PostMapping

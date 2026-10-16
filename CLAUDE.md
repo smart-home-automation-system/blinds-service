@@ -5,8 +5,8 @@ where they really are and running them on schedules that take the weather into a
 HAS-243 it consumes the device events; since HAS-244 it knows the blinds from the device registry
 and moves them on command through three drivers; since HAS-245 it tracks the real state of every
 blind from what the devices report and serves it (`GET /home/blinds`, `/rooms/{room}`, `/{id}`);
-since HAS-246 it stores the schedules (`/home/blinds/schedules`, CRUD) - nothing runs them yet
-(HAS-247).
+since HAS-246 it stores the schedules (`/home/blinds/schedules`, CRUD); since HAS-247 the schedule
+engine runs them every minute and `GET /schedules/{id}/today` shows what it makes of one.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -21,15 +21,19 @@ review.
   `database-service` (device registry), `weather-service` and `amx-service` over k8s DNS
   (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
-- Uses libraries: `cholewa-commons` 1.8.0 (pool, error contract, connection names,
-  `NotificationPublisher`), `smart-home-sdk` 1.9.0 (`SmartDevice` of the registry),
-  `shelly-client` 2.0.0 (`ShellyGen1Client`, `ShellyRpcClient`).
+- Uses libraries: `cholewa-commons` 1.9.0 (pool, error contract, connection names,
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.9.0 (`SmartDevice` of
+  the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.1.0
+  (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
+- Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
+  (once a day), `GET /home/weather/current` of `weather-service` (every minute) - the names
+  `illuminance`, `temperature`, `gust`, `raining` there are wire contract (`WeatherClient.METRICS`).
 - Database: own database `home-automation-blinds`, pool `database.pool.max-size: 2` (heating 2 /
   database 4 / water 2 / presence 2 / blinds 2 = 12 of 22), pinned by
   `BlindsServiceApplicationTest`. Tables: `blinds_state` (`V1`, HAS-245); `blinds_schedule`,
-  `blinds_schedule_target`, `blinds_schedule_condition` (`V2`, HAS-246). **The next migration is
-  `V3`** - the Jira descriptions of the epic count one higher (they gave the schedules `V3`): HAS-247
-  (runs) takes V3, HAS-248 (overrides) V4.
+  `blinds_schedule_target`, `blinds_schedule_condition` (`V2`, HAS-246); `blinds_schedule_run`
+  (`V3`, HAS-247). **The next migration is `V4`** - the Jira descriptions of the epic count one
+  higher (they gave the runs `V4`): HAS-248 (overrides) takes V4.
 - Integrates with hardware: the Eaton blinds through `amx-service`, the Shelly blinds over HTTP
   (commands, since HAS-244) and MQTT (their status topics — HAS-245). Registered for the
   verification of HAS-244: `Office window` (id 52, Gen1 SHSW-25) and `Office door` (id 53, Gen2
@@ -40,7 +44,8 @@ review.
 - Build + tests: `mvn verify` **needs a running Docker** since HAS-245: `BlindStateRepositoryTest`
   runs the `DISTINCT ON` and the `touchLatest` of the state on a Testcontainers PostgreSQL
   (`@DataR2dbcTest`, migrations applied by hand), and so does `ScheduleServiceTest` (the schedules,
-  their transaction and the CHECKs of `V2`). Without Docker it fails, it is not skipped.
+  their transaction and the CHECKs of `V2`), and `ScheduleRunRepositoryTest` (`V3`). Without
+  Docker it fails, it is not skipped.
 - Local run: `home,local` Spring profiles, port `6011` (Actuator `8011`); in-cluster port
   `6200`, Actuator `8200`. Locally the broker is `localhost`, the services are on 6005 / 6010 /
   6001, and the broker passwords default to a dummy.
@@ -117,11 +122,36 @@ review.
   - A CHECK that comes out NULL lets the row in - `V2` says `IS NOT NULL` explicitly where it
     matters.
   - A target blind is not checked against the registry: the engine must skip one it does not know.
-- **One instance, `Recreate`, never scaled**: the schedule engine will live in its memory.
-  `@EnableScheduling` is in `SchedulingConfig` under `@Profile("!test")`.
-- **The broker passwords have no default in `home`**: `BrokerPasswordCheck` refuses the start
-  without `rabbitmq-password` or `notification-rabbitmq-password`. It is the third copy of the
-  class (heating-service, boiler-service) — up to three copies stay.
+- **The schedule engine (HAS-247)**, package `engine`: `ScheduleEnginePass` every minute (first
+  one a minute after the start), `ScheduleEngine` gathers the inputs and acts, **`ScheduleEvaluator`
+  decides and holds every rule** - pure, pinned by `ScheduleEvaluatorTest` (window kinds and clamps,
+  day types, truths, holds, the order of the verdicts, once a day).
+  - **What is not known never holds**: a weather metric missing, `stale`, or measured more than
+    10 min ago; a time of the sun the day does not have. The schedule that needs it does not fire,
+    the others do. A failed calendar read means the weekday alone (WARN), asked again after 10 min.
+  - **`window closed` is always unknown** - no window sensor exists in the house yet; a schedule
+    with that condition never fires. The decoding (BTHome `0x2D` through the gateways, Gen1
+    Door/Window 2 on `/events/gen1`) is a task of its own (owner, 2026-10-16).
+  - **Once a day per schedule and blind**: the runs of the day are read before anything fires (a
+    failed read fires nothing), the blind is remembered in memory **before** its command is sent,
+    the row after it (`UNIQUE (schedule_id, device_id, fired_on)`). A failed command is a run
+    (`FAILED`) and is never repeated; a position for a blind without one is `UNSUPPORTED`; a blind
+    the protection holds back is not a run and is tried again the next minute.
+  - The holds live in memory (`HoldTracker`): a restart starts them again - later, never earlier.
+  - A decision is logged at INFO when it changes, not every minute; a weather failure is one WARN
+    and one INFO when it is back.
+  - The sun is computed for `blinds.location.{latitude,longitude}` (`location-latitude` /
+    `location-longitude` of the manifest; not in the public yaml, no default - a local run needs
+    them too) in the zone of the JVM (`TZ=Europe/Warsaw` of the image).
+  - `GET /schedules/{id}/today` changes nothing: the weather of the last pass, the holds as it
+    left them; its `decision` and `state` values are the `@JsonValue`s of `Verdict` /
+    `ConditionStatus` - the dashboard will copy them.
+- **One instance, `Recreate`, never scaled**: the schedule engine lives in its memory (holds, the
+  blinds sent today). `@EnableScheduling` is in `SchedulingConfig` under `@Profile("!test")`.
+- **What has no default in `home`** - the two broker passwords and the place of the house - is
+  listed in `cholewa.required-properties` (`cholewa-commons` 1.9.0), which refuses the start
+  before the first bean; `RequiredPropertiesTest` ties the list to the placeholders. The own
+  `BrokerPasswordCheck` copy is gone (HAS-247).
 - **The notification connection is not a bean** (`NotificationRabbitConfig`, the same as in
   heating-service): a `ConnectionFactory` or `RabbitOperations` bean would make
   `RabbitAutoConfiguration` back off, and the listener would lose manual ack, prefetch and
@@ -142,4 +172,5 @@ review.
   arguments and `--flyway-url=...?sslmode=require`. A local run polls the real Shelly devices
   (reads only); the registry can be a stub on 6005.
 - **Surefire activates the `test` profile for every class**; the `includes` match only
-  `**/*Test.java` and `**/*IT.java`. Tests use `mockwebserver3`.
+  `**/*Test.java` and `**/*IT.java`. Tests use `mockwebserver3`, and a publisher is verified as
+  `publisher.as(StepVerifier::create)` only (converted everywhere with HAS-247).

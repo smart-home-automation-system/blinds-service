@@ -36,7 +36,7 @@ class ShellyDriversTest {
     void should_send_a_gen1_roller_its_command_on_its_channel(final BlindCommand command, final RollerCommand go) {
         when(gen1Client.roller("10.0.0.21", 1, go)).thenReturn(Mono.just(new RollerStatus()));
 
-        StepVerifier.create(gen1Driver.move(ROLLER, command)).verifyComplete();
+        gen1Driver.move(ROLLER, command).as(StepVerifier::create).verifyComplete();
 
         verify(gen1Client).roller("10.0.0.21", 1, go);
     }
@@ -45,7 +45,7 @@ class ShellyDriversTest {
     void should_send_a_gen1_roller_to_a_position() {
         when(gen1Client.rollerToPosition("10.0.0.21", 1, 40)).thenReturn(Mono.just(new RollerStatus()));
 
-        StepVerifier.create(gen1Driver.moveTo(ROLLER, 40)).verifyComplete();
+        gen1Driver.moveTo(ROLLER, 40).as(StepVerifier::create).verifyComplete();
     }
 
     @Test
@@ -53,7 +53,7 @@ class ShellyDriversTest {
         when(gen1Client.roller("10.0.0.21", 1, RollerCommand.OPEN))
             .thenReturn(Mono.error(new ShellyCallException("GET /roller/1 of 10.0.0.21 timed out")));
 
-        StepVerifier.create(gen1Driver.move(ROLLER, BlindCommand.OPEN)).expectError(ShellyCallException.class).verify();
+        gen1Driver.move(ROLLER, BlindCommand.OPEN).as(StepVerifier::create).expectError(ShellyCallException.class).verify();
     }
 
     @Test
@@ -63,10 +63,10 @@ class ShellyDriversTest {
         when(rpcClient.coverStop("10.0.0.22", 0)).thenReturn(Mono.empty());
         when(rpcClient.coverGoToPosition("10.0.0.22", 0, 75)).thenReturn(Mono.empty());
 
-        StepVerifier.create(gen2Driver.move(COVER, BlindCommand.OPEN)).verifyComplete();
-        StepVerifier.create(gen2Driver.move(COVER, BlindCommand.CLOSE)).verifyComplete();
-        StepVerifier.create(gen2Driver.move(COVER, BlindCommand.STOP)).verifyComplete();
-        StepVerifier.create(gen2Driver.moveTo(COVER, 75)).verifyComplete();
+        gen2Driver.move(COVER, BlindCommand.OPEN).as(StepVerifier::create).verifyComplete();
+        gen2Driver.move(COVER, BlindCommand.CLOSE).as(StepVerifier::create).verifyComplete();
+        gen2Driver.move(COVER, BlindCommand.STOP).as(StepVerifier::create).verifyComplete();
+        gen2Driver.moveTo(COVER, 75).as(StepVerifier::create).verifyComplete();
 
         verify(rpcClient).coverOpen("10.0.0.22", 0);
         verify(rpcClient).coverClose("10.0.0.22", 0);

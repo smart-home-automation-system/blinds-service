@@ -89,7 +89,7 @@ class BlindEventRouterTest {
 
     @Test
     void should_fail_on_an_eaton_body_that_is_not_an_event() {
-        StepVerifier.create(router.route("eaton.blinds.9", "not json".getBytes(StandardCharsets.UTF_8)))
+        router.route("eaton.blinds.9", "not json".getBytes(StandardCharsets.UTF_8)).as(StepVerifier::create)
             .expectError()
             .verify();
     }
@@ -153,8 +153,8 @@ class BlindEventRouterTest {
 
     @Test
     void should_fail_on_a_cover_body_that_is_not_its_status() {
-        StepVerifier.create(router.route("shellyplus2pm-08a6f77e5e34.status.cover:0",
-                "{\"state\":\"open\"}".getBytes(StandardCharsets.UTF_8)))
+        router.route("shellyplus2pm-08a6f77e5e34.status.cover:0",
+                "{\"state\":\"open\"}".getBytes(StandardCharsets.UTF_8)).as(StepVerifier::create)
             .expectError(ShellyDecodeException.class)
             .verify();
     }
@@ -171,6 +171,6 @@ class BlindEventRouterTest {
     }
 
     private void route(final String routingKey, final String body) {
-        StepVerifier.create(router.route(routingKey, body.getBytes(StandardCharsets.UTF_8))).verifyComplete();
+        router.route(routingKey, body.getBytes(StandardCharsets.UTF_8)).as(StepVerifier::create).verifyComplete();
     }
 }
