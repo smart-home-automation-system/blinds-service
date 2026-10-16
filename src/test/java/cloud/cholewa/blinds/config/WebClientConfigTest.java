@@ -38,8 +38,8 @@ class WebClientConfigTest {
     void should_call_the_address_of_the_service() throws InterruptedException {
         server.enqueue(new MockResponse.Builder().code(200).body("ok").build());
 
-        StepVerifier.create(client(Duration.ofSeconds(5)).get().uri("/home/device/registry")
-                .retrieve().bodyToMono(String.class))
+        client(Duration.ofSeconds(5)).get().uri("/home/device/registry")
+                .retrieve().bodyToMono(String.class).as(StepVerifier::create)
             .expectNext("ok")
             .verifyComplete();
 
@@ -53,8 +53,8 @@ class WebClientConfigTest {
         server.enqueue(new MockResponse.Builder().code(200).body("late")
             .headersDelay(3, TimeUnit.SECONDS).build());
 
-        StepVerifier.create(client(Duration.ofSeconds(1)).get().uri("/")
-                .retrieve().bodyToMono(String.class))
+        client(Duration.ofSeconds(1)).get().uri("/")
+                .retrieve().bodyToMono(String.class).as(StepVerifier::create)
             .expectError(WebClientRequestException.class)
             .verify(Duration.ofSeconds(10));
     }

@@ -5,6 +5,13 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import cloud.cholewa.blinds.config.ExceptionHandlerConfig;
+import cloud.cholewa.blinds.engine.RunOutcome;
+import cloud.cholewa.blinds.engine.ScheduleEngine;
+import cloud.cholewa.blinds.engine.ScheduleEvaluator.ConditionStatus;
+import cloud.cholewa.blinds.engine.ScheduleEvaluator.Verdict;
+import cloud.cholewa.blinds.model.schedule.ConditionMetric;
+import cloud.cholewa.blinds.model.schedule.ConditionOperator;
+import cloud.cholewa.blinds.model.schedule.ScheduleToday;
 import cloud.cholewa.blinds.error.BlindsException;
 import cloud.cholewa.blinds.error.processor.BlindsExceptionProcessor;
 import cloud.cholewa.blinds.model.schedule.Schedule;
@@ -26,7 +33,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 import static cloud.cholewa.blinds.service.schedule.ScheduleFixtures.sunsetClose;
@@ -75,6 +85,9 @@ class BlindsScheduleControllerTest {
 
     @MockitoBean
     private BlindsCommandService blindsCommandService;
+
+    @MockitoBean
+    private ScheduleEngine scheduleEngine;
 
     @BeforeEach
     void setUp() {
@@ -234,6 +247,69 @@ class BlindsScheduleControllerTest {
             .expectBody()
             .jsonPath("$.errors[0].code").isEqualTo("NOT_FOUND_SCHEDULE")
             .jsonPath("$.errors[0].details").isEqualTo("no schedule with id 9");
+    }
+
+    //the values of the API, the times to the minute, and nothing the engine does not know
+    @Test
+    void should_answer_a_schedule_today() {
+        final Schedule schedule = stored(sunsetClose().build(), 1);
+        when(scheduleService.get(1)).thenReturn(Mono.just(schedule));
+        when(scheduleEngine.today(schedule)).thenReturn(Mono.just(new ScheduleToday(
+            1,
+            LocalDate.of(2026, 10, 16),
+            "workday",
+            true,
+            true,
+            new ScheduleToday.Window(LocalTime.of(17, 17), LocalTime.of(23, 0)),
+            List.of(
+                new ScheduleToday.Condition(ConditionMetric.ILLUMINANCE, ConditionOperator.LT, BigDecimal.valueOf(200), null,
+                    10, 150, LocalDateTime.of(2026, 10, 16, 17, 20, 5), LocalDateTime.of(2026, 10, 16, 17, 18, 0),
+                    ConditionStatus.MET),
+                new ScheduleToday.Condition(ConditionMetric.WINDOW_CLOSED, ConditionOperator.IS, null, true,
+                    0, null, null, null, ConditionStatus.UNKNOWN)),
+            List.of(
+                new ScheduleToday.Target(53, "Office door", "office", LocalDateTime.of(2026, 10, 16, 17, 28, 0), RunOutcome.MOVED),
+                new ScheduleToday.Target(52, "Office window", "office", null, null)),
+            Verdict.FIRE)));
+
+        webTestClient.get().uri("/schedules/1/today")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.scheduleId").isEqualTo(1)
+            .jsonPath("$.date").isEqualTo("2026-10-16")
+            .jsonPath("$.dayType").isEqualTo("workday")
+            .jsonPath("$.dayTypeFromCalendar").isEqualTo(true)
+            .jsonPath("$.runsToday").isEqualTo(true)
+            .jsonPath("$.window.from").isEqualTo("17:17")
+            .jsonPath("$.window.to").isEqualTo("23:00")
+            .jsonPath("$.conditions[0].metric").isEqualTo("illuminance")
+            .jsonPath("$.conditions[0].operator").isEqualTo("lt")
+            .jsonPath("$.conditions[0].threshold").isEqualTo(200)
+            .jsonPath("$.conditions[0].current").isEqualTo(150)
+            .jsonPath("$.conditions[0].state").isEqualTo("met")
+            .jsonPath("$.conditions[1].metric").isEqualTo("window closed")
+            .jsonPath("$.conditions[1].value").isEqualTo(true)
+            .jsonPath("$.conditions[1].state").isEqualTo("unknown")
+            .jsonPath("$.conditions[1].current").doesNotExist()
+            .jsonPath("$.conditions[1].trueSince").doesNotExist()
+            .jsonPath("$.targets[0].outcome").isEqualTo("moved")
+            .jsonPath("$.targets[0].firedAt").isEqualTo("2026-10-16T17:28:00")
+            .jsonPath("$.targets[1].outcome").doesNotExist()
+            .jsonPath("$.decision").isEqualTo("fires");
+    }
+
+    @Test
+    void should_answer_not_found_for_today_of_a_schedule_that_does_not_exist() {
+        when(scheduleService.get(anyLong())).thenReturn(Mono.error(BlindsException.scheduleNotFound(9)));
+
+        webTestClient.get().uri("/schedules/9/today")
+            .exchange()
+            .expectStatus().isNotFound()
+            .expectBody()
+            .jsonPath("$.errors[0].code").isEqualTo("NOT_FOUND_SCHEDULE");
+
+        verifyNoInteractions(scheduleEngine);
     }
 
     //a value the API does not have - also in another case, or a fraction for a whole number - is a

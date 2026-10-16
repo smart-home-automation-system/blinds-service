@@ -59,7 +59,7 @@ class BlindsCommandServiceTest {
     void should_send_the_command_to_the_driver_of_the_blind() {
         when(driver.move(KITCHEN, BlindCommand.CLOSE)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE)).verifyComplete();
+        service.move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE).as(StepVerifier::create).verifyComplete();
 
         //noted before it goes out: the device may report the movement before it answers
         final InOrder order = inOrder(protection, tracker, driver);
@@ -72,12 +72,12 @@ class BlindsCommandServiceTest {
     void should_send_a_blind_with_positioning_to_the_position() {
         when(driver.moveTo(OFFICE, 30)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.moveTo(21, 30, CommandSource.DASHBOARD)).verifyComplete();
+        service.moveTo(21, 30, CommandSource.DASHBOARD).as(StepVerifier::create).verifyComplete();
     }
 
     @Test
     void should_refuse_a_position_for_a_blind_without_positioning() {
-        StepVerifier.create(service.moveTo(17, 30, CommandSource.DASHBOARD))
+        service.moveTo(17, 30, CommandSource.DASHBOARD).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.UNSUPPORTED_POSITION))
             .verify();
 
@@ -92,7 +92,7 @@ class BlindsCommandServiceTest {
             .thenReturn(Mono.error(BlindsException.protectionActive(KITCHEN, "wind above the limit")));
         when(driver.move(KITCHEN, BlindCommand.OPEN)).thenReturn(Mono.fromRunnable(() -> called.set(true)));
 
-        StepVerifier.create(service.move(17, BlindCommand.OPEN, CommandSource.DASHBOARD))
+        service.move(17, BlindCommand.OPEN, CommandSource.DASHBOARD).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.PROTECTION_ACTIVE))
             .verify();
 
@@ -105,7 +105,7 @@ class BlindsCommandServiceTest {
         when(driver.move(KITCHEN, BlindCommand.OPEN))
             .thenReturn(Mono.error(new ShellyCallException("GET /roller/0 of 10.0.0.1 timed out")));
 
-        StepVerifier.create(service.move(17, BlindCommand.OPEN, CommandSource.DASHBOARD))
+        service.move(17, BlindCommand.OPEN, CommandSource.DASHBOARD).as(StepVerifier::create)
             .expectErrorSatisfies(e -> {
                 final BlindsException exception = (BlindsException) e;
                 assertThat(exception.getError()).isEqualTo(BlindsError.DEVICE_FAILED);
@@ -119,7 +119,7 @@ class BlindsCommandServiceTest {
     void should_pass_an_unknown_blind_on() {
         when(registry.find(99)).thenReturn(Mono.error(BlindsException.notFound("no blind with id 99")));
 
-        StepVerifier.create(service.move(99, BlindCommand.OPEN, CommandSource.DASHBOARD))
+        service.move(99, BlindCommand.OPEN, CommandSource.DASHBOARD).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.NOT_FOUND_BLINDS))
             .verify();
     }
@@ -132,7 +132,7 @@ class BlindsCommandServiceTest {
         when(driver.move(OFFICE_DOOR, BlindCommand.STOP)).thenReturn(Mono.empty());
         when(driver.move(KITCHEN, BlindCommand.STOP)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.STOP, CommandSource.DASHBOARD))
+        service.moveRoom(RoomName.OFFICE, BlindCommand.STOP, CommandSource.DASHBOARD).as(StepVerifier::create)
             .assertNext(reply -> {
                 assertThat(reply.room()).isEqualTo("office");
                 assertThat(reply.command()).isEqualTo("stop");
@@ -155,7 +155,7 @@ class BlindsCommandServiceTest {
             .thenReturn(Mono.error(BlindsException.protectionActive(OFFICE, "frost")));
         when(driver.move(OFFICE_DOOR, BlindCommand.OPEN)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.SCHEDULE))
+        service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.SCHEDULE).as(StepVerifier::create)
             .assertNext(reply -> {
                 assertThat(reply.moved()).containsExactly(new BlindOutcome(22, "Blind 22", null));
                 assertThat(reply.failed()).containsExactly(new BlindOutcome(21, "Blind 21", "PROTECTION_ACTIVE"));
@@ -171,7 +171,7 @@ class BlindsCommandServiceTest {
             .thenReturn(Mono.error(BlindsException.protectionActive(OFFICE, "frost")));
         when(driver.move(OFFICE_DOOR, BlindCommand.OPEN)).thenReturn(Mono.error(new ShellyCallException("timed out")));
 
-        StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.DASHBOARD))
+        service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.DASHBOARD).as(StepVerifier::create)
             .expectErrorSatisfies(e -> {
                 final BlindsException exception = (BlindsException) e;
                 assertThat(exception.getError()).isEqualTo(BlindsError.DEVICE_FAILED);
@@ -186,7 +186,7 @@ class BlindsCommandServiceTest {
         when(protection.check(OFFICE, CommandSource.SCHEDULE))
             .thenReturn(Mono.error(BlindsException.protectionActive(OFFICE, "frost")));
 
-        StepVerifier.create(service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.SCHEDULE))
+        service.moveRoom(RoomName.OFFICE, BlindCommand.OPEN, CommandSource.SCHEDULE).as(StepVerifier::create)
             .expectErrorSatisfies(e -> {
                 final BlindsException exception = (BlindsException) e;
                 assertThat(exception.getError()).isEqualTo(BlindsError.PROTECTION_ACTIVE);
@@ -199,7 +199,7 @@ class BlindsCommandServiceTest {
     void should_pass_a_room_without_blinds_on() {
         when(registry.inRoom(RoomName.SAUNA)).thenReturn(Mono.error(BlindsException.notFound("no blind in the room sauna")));
 
-        StepVerifier.create(service.moveRoom(RoomName.SAUNA, BlindCommand.OPEN, CommandSource.DASHBOARD))
+        service.moveRoom(RoomName.SAUNA, BlindCommand.OPEN, CommandSource.DASHBOARD).as(StepVerifier::create)
             .expectError(BlindsException.class)
             .verify();
     }

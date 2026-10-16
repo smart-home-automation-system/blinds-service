@@ -53,7 +53,7 @@ class EatonDriverTest {
             .addHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .body("{\"sentAt\":\"2026-10-15T20:06:44\"}").build());
 
-        StepVerifier.create(driver.move(KITCHEN, command)).verifyComplete();
+        driver.move(KITCHEN, command).as(StepVerifier::create).verifyComplete();
 
         final RecordedRequest request = server.takeRequest();
         assertThat(request.getMethod()).isEqualTo("POST");
@@ -69,7 +69,7 @@ class EatonDriverTest {
             .body("{\"errors\":[{\"message\":\"AMX frame server unavailable\",\"code\":\"FRAME_SERVER_UNAVAILABLE\"}]}")
             .build());
 
-        StepVerifier.create(driver.move(KITCHEN, BlindCommand.CLOSE))
+        driver.move(KITCHEN, BlindCommand.CLOSE).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(e)
                 .isInstanceOf(EatonDriver.AmxCallException.class)
                 .hasMessageContaining("amx-service answered 502")
@@ -79,7 +79,7 @@ class EatonDriverTest {
 
     @Test
     void should_not_send_an_eaton_actuator_to_a_position() {
-        StepVerifier.create(driver.moveTo(KITCHEN, 50))
+        driver.moveTo(KITCHEN, 50).as(StepVerifier::create)
             .expectErrorSatisfies(e -> assertThat(((BlindsException) e).getError()).isEqualTo(BlindsError.UNSUPPORTED_POSITION))
             .verify();
 

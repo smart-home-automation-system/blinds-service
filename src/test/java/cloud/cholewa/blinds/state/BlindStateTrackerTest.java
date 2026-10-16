@@ -223,9 +223,9 @@ class BlindStateTrackerTest {
 
     @Test
     void should_insert_a_row_for_a_change_and_touch_the_latest_for_a_confirmation() {
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, "init"))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, "init")).as(StepVerifier::create).verifyComplete();
         clock.move(Duration.ofMinutes(1));
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, "init"))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, "init")).as(StepVerifier::create).verifyComplete();
 
         final ArgumentCaptor<BlindStateEntity> saved = ArgumentCaptor.forClass(BlindStateEntity.class);
         verify(repository).save(saved.capture());
@@ -239,9 +239,9 @@ class BlindStateTrackerTest {
     void should_keep_the_time_of_a_change_to_the_microsecond() {
         clock.move(Duration.ofNanos(1_234_567));
 
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(tracker.status(53).map(BlindStatus::movedAt))
+        tracker.status(53).map(BlindStatus::movedAt).as(StepVerifier::create)
             .expectNext(NOW.plusNanos(1_234_000))
             .verifyComplete();
     }
@@ -250,8 +250,8 @@ class BlindStateTrackerTest {
     @Test
     void should_insert_a_row_when_there_is_none_to_confirm() {
         when(repository.touchLatest(anyLong(), any(), any())).thenReturn(Mono.just(0));
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
 
         verify(repository, times(2)).save(any());
     }
@@ -266,11 +266,11 @@ class BlindStateTrackerTest {
         }));
         tracker = new BlindStateTracker(repository, clock);
 
-        StepVerifier.create(tracker.status(53))
+        tracker.status(53).as(StepVerifier::create)
             .expectNext(new BlindStatus(BlindState.OPEN, 100, Direction.OPEN, NOW.minusHours(3), "dashboard", null))
             .verifyComplete();
         //the same state from the device confirms what was restored: no new row
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.OPEN, 100, "init"))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.OPEN, 100, "init")).as(StepVerifier::create).verifyComplete();
 
         assertThat(reads).hasValue(1);
         verify(repository, never()).save(any());
@@ -282,8 +282,8 @@ class BlindStateTrackerTest {
         when(repository.findLatestPerDevice()).thenReturn(Flux.error(new IllegalStateException("no connection")));
         tracker = new BlindStateTracker(repository, clock);
 
-        StepVerifier.create(tracker.status(53)).expectNext(BlindStatus.unknown()).verifyComplete();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+        tracker.status(53).as(StepVerifier::create).expectNext(BlindStatus.unknown()).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
     }
 
     //the memory moved on: the error is the caller's to log, the state is known all the same
@@ -291,10 +291,10 @@ class BlindStateTrackerTest {
     void should_pass_a_failed_write_on_and_keep_the_state() {
         doReturn(Mono.error(new IllegalStateException("no connection"))).when(repository).save(any());
 
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)))
+        tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)).as(StepVerifier::create)
             .expectError(IllegalStateException.class)
             .verify();
-        StepVerifier.create(tracker.status(53).map(BlindStatus::state)).expectNext(BlindState.CLOSING).verifyComplete();
+        tracker.status(53).map(BlindStatus::state).as(StepVerifier::create).expectNext(BlindState.CLOSING).verifyComplete();
     }
 
     //the latest row is what a restart reads back: a change must not overtake the one before it
@@ -309,7 +309,7 @@ class BlindStateTrackerTest {
         }).when(repository).save(any());
 
         tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)).subscribe();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)))
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create)
             .expectSubscription()
             .then(() -> {
                 assertThat(stored).containsExactly(BlindState.CLOSING);
@@ -325,10 +325,10 @@ class BlindStateTrackerTest {
         doReturn(Mono.error(new IllegalStateException("no connection")), Mono.just(entityOf(BlindState.CLOSED)))
             .when(repository).save(any());
 
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)))
+        tracker.observe(DOOR, reading(BlindState.CLOSING, null, null)).as(StepVerifier::create)
             .expectError(IllegalStateException.class)
             .verify();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
     }
 
     // ---- who moved it
@@ -337,9 +337,9 @@ class BlindStateTrackerTest {
     void should_attribute_the_next_change_to_a_command_once() {
         tracker.commanded(DOOR, CommandSource.DASHBOARD, false);
         clock.move(Duration.ofSeconds(2));
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.OPENING, 10, "HTTP_in"))).verifyComplete();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.OPEN, 100, "limit_switch"))).verifyComplete();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "SHC"))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.OPENING, 10, "HTTP_in")).as(StepVerifier::create).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.OPEN, 100, "limit_switch")).as(StepVerifier::create).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "SHC")).as(StepVerifier::create).verifyComplete();
 
         final ArgumentCaptor<BlindStateEntity> saved = ArgumentCaptor.forClass(BlindStateEntity.class);
         verify(repository, times(3)).save(saved.capture());
@@ -351,18 +351,18 @@ class BlindStateTrackerTest {
     void should_not_attribute_a_change_long_after_the_command() {
         tracker.commanded(DOOR, CommandSource.SCHEDULE, false);
         clock.move(BlindStateTracker.COMMAND_WINDOW.plusSeconds(1));
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "button"))).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "button")).as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(tracker.status(53).map(BlindStatus::source)).expectNext("button").verifyComplete();
+        tracker.status(53).map(BlindStatus::source).as(StepVerifier::create).expectNext("button").verifyComplete();
     }
 
     // ---- reachability
 
     @Test
     void should_know_reachability_without_a_state_and_write_nothing() {
-        StepVerifier.create(tracker.reachability(DOOR, false, "the device left the broker")).verifyComplete();
+        tracker.reachability(DOOR, false, "the device left the broker").as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(tracker.status(53))
+        tracker.status(53).as(StepVerifier::create)
             .expectNext(BlindStatus.unknown().withReachable(false))
             .verifyComplete();
         verify(repository, never()).save(any());
@@ -371,18 +371,18 @@ class BlindStateTrackerTest {
 
     @Test
     void should_take_a_reading_as_proof_that_the_blind_is_reachable() {
-        StepVerifier.create(tracker.reachability(DOOR, false, "timeout")).verifyComplete();
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
+        tracker.reachability(DOOR, false, "timeout").as(StepVerifier::create).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(tracker.status(53).map(BlindStatus::reachable)).expectNext(true).verifyComplete();
+        tracker.status(53).map(BlindStatus::reachable).as(StepVerifier::create).expectNext(true).verifyComplete();
     }
 
     @Test
     void should_keep_the_state_when_the_blind_becomes_unreachable() {
-        StepVerifier.create(tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null))).verifyComplete();
-        StepVerifier.create(tracker.reachability(DOOR, false, "timeout")).verifyComplete();
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+        tracker.reachability(DOOR, false, "timeout").as(StepVerifier::create).verifyComplete();
 
-        StepVerifier.create(tracker.status(53))
+        tracker.status(53).as(StepVerifier::create)
             .expectNext(new BlindStatus(BlindState.CLOSED, 0, null, NOW, "external", false))
             .verifyComplete();
         verify(repository).save(eq(new BlindStateEntity(null, 53, BlindState.CLOSED, 0, null, "external", NOW, NOW)));

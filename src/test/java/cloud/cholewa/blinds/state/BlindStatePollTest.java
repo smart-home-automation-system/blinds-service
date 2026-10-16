@@ -62,7 +62,7 @@ class BlindStatePollTest {
         when(gen1.status("10.0.0.59")).thenReturn(Mono.just(gen1Status(roller("stop", 100))));
         when(gen1.status("10.0.0.88")).thenReturn(Mono.just(gen1Status(roller("close", 40))));
 
-        StepVerifier.create(poll.pollGen1()).verifyComplete();
+        poll.pollGen1().as(StepVerifier::create).verifyComplete();
 
         verify(tracker).observe(WINDOW, new BlindReading(BlindState.OPEN, 100, null, null));
         verify(tracker).observe(BEDROOM, new BlindReading(BlindState.CLOSING, 40, null, null));
@@ -75,7 +75,7 @@ class BlindStatePollTest {
         when(gen1.status("10.0.0.59")).thenReturn(Mono.error(new ShellyCallException("GET /status of 10.0.0.59 timed out")));
         when(gen1.status("10.0.0.88")).thenReturn(Mono.just(gen1Status(roller("stop", 0))));
 
-        StepVerifier.create(poll.pollGen1()).verifyComplete();
+        poll.pollGen1().as(StepVerifier::create).verifyComplete();
 
         verify(tracker).reachability(eq(WINDOW), eq(false), any());
         verify(tracker).observe(BEDROOM, new BlindReading(BlindState.CLOSED, 0, null, null));
@@ -85,7 +85,7 @@ class BlindStatePollTest {
     void should_take_a_status_without_the_roller_as_a_failed_read() {
         when(gen1.status(anyString())).thenReturn(Mono.just(gen1Status()));
 
-        StepVerifier.create(poll.pollGen1()).verifyComplete();
+        poll.pollGen1().as(StepVerifier::create).verifyComplete();
 
         verify(tracker).reachability(eq(WINDOW), eq(false), any());
         verify(tracker, never()).observe(any(), any());
@@ -97,7 +97,7 @@ class BlindStatePollTest {
         when(gen1.status(anyString())).thenReturn(Mono.just(gen1Status(roller("stop", 0))));
         when(tracker.observe(any(), any())).thenReturn(Mono.error(new IllegalStateException("no connection")));
 
-        StepVerifier.create(poll.pollGen1()).verifyComplete();
+        poll.pollGen1().as(StepVerifier::create).verifyComplete();
 
         verify(tracker, never()).reachability(any(), eq(false), any());
     }
@@ -111,7 +111,7 @@ class BlindStatePollTest {
         cover.setCurrentPos(0);
         when(rpc.coverStatus("10.0.0.50", 0)).thenReturn(Mono.just(cover));
 
-        StepVerifier.create(poll.reconcileGen2()).verifyComplete();
+        poll.reconcileGen2().as(StepVerifier::create).verifyComplete();
 
         verify(tracker).observe(DOOR, new BlindReading(BlindState.CLOSED, 0, null, null));
         verify(gen1, never()).status(anyString());
@@ -122,7 +122,7 @@ class BlindStatePollTest {
     void should_leave_the_reachability_of_a_cover_to_mqtt_when_the_reconciliation_fails() {
         when(rpc.coverStatus("10.0.0.50", 0)).thenReturn(Mono.error(new ShellyCallException("timed out")));
 
-        StepVerifier.create(poll.reconcileGen2()).verifyComplete();
+        poll.reconcileGen2().as(StepVerifier::create).verifyComplete();
 
         verify(tracker, never()).reachability(any(), anyBoolean(), any());
     }
@@ -137,8 +137,8 @@ class BlindStatePollTest {
         });
         final Mono<Void> pass = poll.pollGen1();
 
-        StepVerifier.create(pass).verifyComplete();
-        StepVerifier.create(pass).verifyComplete();
+        pass.as(StepVerifier::create).verifyComplete();
+        pass.as(StepVerifier::create).verifyComplete();
 
         assertThat(reads).hasValue(2);
     }
