@@ -11,6 +11,8 @@ import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 //The type of today, asked of the calendar once a day and kept. When the calendar cannot be read the
@@ -23,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class DayTypes {
 
     static final Duration RETRY_AFTER = Duration.ofMinutes(10);
+    private static final Set<DayOfWeek> WEEKEND = EnumSet.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY);
 
     private final CalendarClient calendarClient;
     private final Clock clock;
@@ -59,7 +62,6 @@ public class DayTypes {
     }
 
     static DayType byWeekday(final LocalDate date) {
-        final DayOfWeek day = date.getDayOfWeek();
-        return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY ? DayType.DAY_OFF : DayType.WORKDAY;
+        return WEEKEND.contains(date.getDayOfWeek()) ? DayType.DAY_OFF : DayType.WORKDAY;
     }
 }

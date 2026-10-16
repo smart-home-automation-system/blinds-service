@@ -97,20 +97,20 @@ public final class ScheduleEvaluator {
     }
 
     //empty when an end is a time of the sun the day does not have
-    public static Optional<ResolvedWindow> window(final ScheduleWindow window, final SunDay sun) {
-        final LocalTime from = end(window.from(), sun);
-        final LocalTime to = end(window.to(), sun);
+    public static Optional<ResolvedWindow> window(final ScheduleWindow window, final SunDay sunDay) {
+        final LocalTime from = end(window.from(), sunDay);
+        final LocalTime to = end(window.to(), sunDay);
         return from == null || to == null ? Optional.empty() : Optional.of(new ResolvedWindow(from, to));
     }
 
     //A time of the sun moved by its offset stays within the day - an evening past midnight is the
     //last minute of the day, not the small hours of it - and is then held between earliest and latest
-    static LocalTime end(final WindowEnd end, final SunDay sun) {
+    static LocalTime end(final WindowEnd end, final SunDay sunDay) {
         if (end.kind() == WindowKind.CLOCK) {
             return end.time();
         }
 
-        final LocalTime base = end.kind() == WindowKind.SUNRISE ? sun.sunrise() : sun.sunset();
+        final LocalTime base = end.kind() == WindowKind.SUNRISE ? sunDay.sunrise() : sunDay.sunset();
         if (base == null) {
             return null;
         }
