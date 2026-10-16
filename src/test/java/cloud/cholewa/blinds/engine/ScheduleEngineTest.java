@@ -253,6 +253,48 @@ class ScheduleEngineTest {
         verify(commandService, never()).move(anyLong(), any(), any());
     }
 
+    //a minute the engine did not judge breaks the hold: later, never earlier
+    @Test
+    void should_start_the_holds_again_after_a_pass_without_the_runs() {
+        schedules(closeTheKitchen(5));
+        final Mono<Void> pass = sut.pass();
+        pass.as(StepVerifier::create).verifyComplete();
+
+        when(runRepository.findByFiredOn(any())).thenReturn(Flux.error(new IllegalStateException("pool exhausted")));
+        now.set(FIVE_PM.plusMinutes(1));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+
+        when(runRepository.findByFiredOn(any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored)));
+        now.set(FIVE_PM.plusMinutes(5));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService, never()).move(anyLong(), any(), any());
+
+        now.set(FIVE_PM.plusMinutes(10));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+    }
+
+    //an error that is no BlindsException is a failed run, and the other blinds still move
+    @Test
+    void should_go_on_with_the_next_blind_after_an_unexpected_error() {
+        schedules(withId(8, ScheduleFixtures.sunsetClose()
+            .from(WindowEnd.clock(LocalTime.of(16, 0)))
+            .targets(List.of(ScheduleTarget.blind(17), ScheduleTarget.blind(52)))
+            .conditions(List.of())
+            .build()));
+        when(commandService.move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE))
+            .thenReturn(Mono.error(new IllegalStateException("unexpected")));
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        assertThat(stored).extracting(ScheduleRunEntity::deviceId, ScheduleRunEntity::outcome).containsExactly(
+            org.assertj.core.groups.Tuple.tuple(17L, RunOutcome.FAILED),
+            org.assertj.core.groups.Tuple.tuple(52L, RunOutcome.MOVED));
+    }
+
     //an unknown input stops the schedules that need it, and no others
     @Test
     void should_fire_the_schedules_without_weather_when_the_weather_cannot_be_read() {

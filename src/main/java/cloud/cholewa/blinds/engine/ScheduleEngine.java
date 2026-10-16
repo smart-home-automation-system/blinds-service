@@ -31,6 +31,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +47,9 @@ import java.util.stream.Collectors;
 //the blinds of its targets it has not moved today, one after the other, with the source schedule.
 //- A pass never fails: an input that cannot be read is unknown, which keeps the schedules that need
 //  it from firing and nothing else; a pass that fails all the same (the runs of the day cannot be
-//  read - then nothing may fire) is a WARN, and the next minute tries again. Bounded by PASS_TIMEOUT.
+//  read - then nothing may fire) is a WARN, and the next minute tries again. Reading the inputs is
+//  bounded by PASS_TIMEOUT; the commands are never cut off - one cut off halfway may have moved its
+//  blind with no run stored - each is bounded by the timeout of its client. fixedDelay waits.
 //- Once a day per schedule and blind: the runs of the day are read before anything fires, and a
 //  blind is remembered in memory before its command is sent - the run row is written after it, so a
 //  failed write does not make the engine move the blind again; a restart reads the rows.
@@ -86,7 +89,6 @@ public class ScheduleEngine {
                 return scheduleService.all()
                     .flatMap(schedules -> schedules.isEmpty() ? forgetAll() : pass(schedules, now));
             })
-            .timeout(PASS_TIMEOUT)
             .onErrorResume(e -> {
                 log.warn("A pass of the schedule engine failed, nothing more fires in it: {}", e.toString());
                 return Mono.empty();
@@ -104,27 +106,28 @@ public class ScheduleEngine {
         final LocalDate today = now.toLocalDate();
         sent.removeIf(key -> !key.date().equals(today));
 
-        return dayTypes.of(today)
-            .zipWith(readWeather(now))
-            .flatMap(inputs -> runRepository.findByFiredOn(today).collectList()
-                .flatMap(runs -> {
-                    final Day day = new Day(now, inputs.getT1(), sunCalendar.of(today), inputs.getT2());
-                    final Map<Long, Set<Long>> fired = firedToday(runs, today);
-                    final Set<Key> keys = new HashSet<>();
+        return Mono.zip(dayTypes.of(today), readWeather(now), runRepository.findByFiredOn(today).collectList())
+            .timeout(PASS_TIMEOUT)
+            //nothing is judged without the runs: a minute not seen must not count towards a hold
+            .doOnError(e -> holdTracker.retain(Set.of()))
+            .flatMap(inputs -> {
+                final Day day = new Day(now, inputs.getT1(), sunCalendar.of(today), inputs.getT2());
+                final Map<Long, Set<Long>> fired = firedToday(inputs.getT3(), today);
+                final Set<Key> keys = new HashSet<>();
 
-                    return Flux.fromIterable(schedules)
-                        .concatMap(schedule -> judge(schedule, day, fired.getOrDefault(schedule.id(), Set.of()), keys))
-                        .then(Mono.fromRunnable(() -> {
-                            holdTracker.retain(keys);
-                            final Set<Long> ids = schedules.stream().map(Schedule::id).collect(Collectors.toSet());
-                            lastDecisions.keySet().retainAll(ids);
-                        }));
-                }));
+                return Flux.fromIterable(schedules)
+                    .concatMap(schedule -> judge(schedule, day, fired.getOrDefault(schedule.id(), Set.of()), keys))
+                    .then(Mono.fromRunnable(() -> {
+                        holdTracker.retain(keys);
+                        final Set<Long> ids = schedules.stream().map(Schedule::id).collect(Collectors.toSet());
+                        lastDecisions.keySet().retainAll(ids);
+                    }));
+            });
     }
 
     //the runs of the rows and those sent in this instance, which a failed write may have left out
     private Map<Long, Set<Long>> firedToday(final List<ScheduleRunEntity> runs, final LocalDate today) {
-        final Map<Long, Set<Long>> fired = new ConcurrentHashMap<>();
+        final Map<Long, Set<Long>> fired = new HashMap<>();
         runs.forEach(run -> fired.computeIfAbsent(run.scheduleId(), ignored -> new HashSet<>()).add(run.deviceId()));
         sent.stream()
             .filter(key -> key.date().equals(today))
@@ -224,6 +227,11 @@ public class ScheduleEngine {
                 });
                 case UNSUPPORTED_POSITION -> Mono.just(RunOutcome.UNSUPPORTED);
                 default -> Mono.just(RunOutcome.FAILED);
+            })
+            //anything else may have moved the blind too, and must not stop the rest of the pass
+            .onErrorResume(e -> !(e instanceof BlindsException), e -> {
+                log.error("Schedule {} ({}) failed on blind {} ({})", schedule.id(), schedule.name(), blind.id(), blind.name(), e);
+                return Mono.just(RunOutcome.FAILED);
             })
             .flatMap(outcome -> {
                 log.info("Schedule {} ({}) sent blind {} ({}, {}) to {}: {}", schedule.id(), schedule.name(),
