@@ -136,6 +136,10 @@ blinds:
   location:
     latitude: ${location-latitude}
     longitude: ${location-longitude}
+  # how long the 70 status of an Eaton movement is waited for before the actuator is asked for its
+  # status (HAS-291); 1 to 60 s
+  eaton:
+    confirm-after: PT5S
 
 # what has no default in this document: a pod without one of them does not start (cholewa-commons,
 # checked before the first bean is created)

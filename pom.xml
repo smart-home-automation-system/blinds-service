@@ -48,7 +48,7 @@
 
 		<!--  internal dependencies versions-->
 		<cholewa-commons.version>1.9.0</cholewa-commons.version>
-		<smart-home-sdk.version>1.9.0</smart-home-sdk.version>
+		<smart-home-sdk.version>1.10.0</smart-home-sdk.version>
 		<shelly-client.version>2.1.0</shelly-client.version>
 
 		<!--  plugins versions-->

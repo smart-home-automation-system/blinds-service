@@ -1,5 +1,6 @@
 package cloud.cholewa.blinds;
 
+import cloud.cholewa.blinds.config.EatonProperties;
 import cloud.cholewa.blinds.config.InternalServiceProperties;
 import cloud.cholewa.blinds.config.LocationProperties;
 import cloud.cholewa.blinds.config.NotificationConnectionProperties;
@@ -11,7 +12,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 @EnableConfigurationProperties({
     NotificationConnectionProperties.class,
     InternalServiceProperties.class,
-    LocationProperties.class
+    LocationProperties.class,
+    EatonProperties.class
 })
 public class BlindsServiceApplication {
 

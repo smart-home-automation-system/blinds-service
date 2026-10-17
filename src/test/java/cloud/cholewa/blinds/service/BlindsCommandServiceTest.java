@@ -8,6 +8,7 @@ import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindBinding;
 import cloud.cholewa.blinds.model.BlindCommand;
 import cloud.cholewa.blinds.model.CommandSource;
+import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.model.RoomCommandReply.BlindOutcome;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindStateTracker;
@@ -45,7 +46,8 @@ class BlindsCommandServiceTest {
     private final BlindsDriver driver = mock(BlindsDriver.class);
     private final ProtectionGuard protection = mock(ProtectionGuard.class);
     private final BlindStateTracker tracker = mock(BlindStateTracker.class);
-    private final BlindsCommandService service = new BlindsCommandService(registry, drivers, protection, tracker);
+    private final EatonMoveConfirmation confirmation = mock(EatonMoveConfirmation.class);
+    private final BlindsCommandService service = new BlindsCommandService(registry, drivers, protection, tracker, confirmation);
 
     @BeforeEach
     void setUp() {
@@ -64,8 +66,41 @@ class BlindsCommandServiceTest {
         //noted before it goes out: the device may report the movement before it answers
         final InOrder order = inOrder(protection, tracker, driver);
         order.verify(protection).check(KITCHEN, CommandSource.SCHEDULE);
-        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE, false);
+        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE, false, Direction.CLOSE);
         order.verify(driver).move(KITCHEN, BlindCommand.CLOSE);
+    }
+
+    //HAS-291: the wait for the movement starts once the command is sent - with the command the
+    //tracker noted, so a newer one is told apart; a stop and a position wait for no direction
+    @Test
+    void should_start_the_confirmation_of_a_sent_command_with_its_direction() {
+        final BlindStateTracker.IssuedCommand issued = mock(BlindStateTracker.IssuedCommand.class);
+        when(tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN)).thenReturn(issued);
+        when(driver.move(KITCHEN, BlindCommand.OPEN)).thenReturn(Mono.empty());
+        when(driver.move(KITCHEN, BlindCommand.STOP)).thenReturn(Mono.empty());
+        when(driver.moveTo(OFFICE, 30)).thenReturn(Mono.empty());
+
+        service.move(17, BlindCommand.OPEN, CommandSource.DASHBOARD).as(StepVerifier::create).verifyComplete();
+        service.move(17, BlindCommand.STOP, CommandSource.DASHBOARD).as(StepVerifier::create).verifyComplete();
+        service.moveTo(21, 30, CommandSource.DASHBOARD).as(StepVerifier::create).verifyComplete();
+
+        final InOrder order = inOrder(driver, confirmation);
+        order.verify(driver).move(KITCHEN, BlindCommand.OPEN);
+        order.verify(confirmation).start(KITCHEN, issued);
+        verify(tracker).commanded(KITCHEN, CommandSource.DASHBOARD, true, null);
+        verify(tracker).commanded(OFFICE, CommandSource.DASHBOARD, false, null);
+    }
+
+    //a command that failed may have moved the blind, but nobody asks after it
+    @Test
+    void should_not_start_the_confirmation_of_a_command_that_failed() {
+        when(driver.move(KITCHEN, BlindCommand.CLOSE)).thenReturn(Mono.error(new IllegalStateException("502")));
+
+        service.move(17, BlindCommand.CLOSE, CommandSource.DASHBOARD).as(StepVerifier::create)
+            .expectError(BlindsException.class)
+            .verify();
+
+        verify(confirmation, never()).start(any(), any());
     }
 
     @Test
@@ -97,7 +132,7 @@ class BlindsCommandServiceTest {
             .verify();
 
         assertThat(called).isFalse();
-        verify(tracker, never()).commanded(any(), any(), anyBoolean());
+        verify(tracker, never()).commanded(any(), any(), anyBoolean(), any());
     }
 
     @Test
