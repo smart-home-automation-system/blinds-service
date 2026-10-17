@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 //The pause of the schedules of one blind (HAS-232): every schedule of the blind is held back until
 //the next run it prevents, which the engine stores as PAUSED and with which it ends the pause
@@ -25,6 +26,9 @@ public class SchedulePauseService {
     private final BlindRegistry blindRegistry;
     private final SchedulePauseRepository pauseRepository;
     private final Clock clock;
+
+    //the pauses as last read - every minute by the engine, and by every read of the blinds
+    private final AtomicReference<Map<Long, LocalDateTime>> lastRead = new AtomicReference<>(Map.of());
 
     public Mono<Void> pause(final long id) {
         return blindRegistry.find(id)
@@ -50,8 +54,20 @@ public class SchedulePauseService {
         return pauseRepository.deleteById(id);
     }
 
-    //since when each paused blind is paused
+    //since when each paused blind is paused - strict: the engine fires nothing without it
     public Mono<Map<Long, LocalDateTime>> paused() {
-        return pauseRepository.findAll().collectMap(SchedulePauseEntity::deviceId, SchedulePauseEntity::pausedAt);
+        return pauseRepository.findAll()
+            .collectMap(SchedulePauseEntity::deviceId, SchedulePauseEntity::pausedAt)
+            .doOnNext(lastRead::set);
+    }
+
+    //for the reads of the blinds, which were served from memory before the pauses and must not fail
+    //for them: a database away answers the pauses as last read - at most a minute old while the engine
+    //runs - with a WARN
+    public Mono<Map<Long, LocalDateTime>> pausedAsLastKnown() {
+        return paused().onErrorResume(e -> {
+            log.warn("The pauses of the schedules could not be read, the last ones read are answered: {}", e.toString());
+            return Mono.just(lastRead.get());
+        });
     }
 }

@@ -39,7 +39,7 @@ public class BlindsQueryService {
 
     //every blind, by room in the order of the rooms of the SDK, each room's in the order of the registry
     public Mono<List<RoomBlinds>> all() {
-        return Mono.zip(blindRegistry.all(), schedulePauseService.paused())
+        return Mono.zip(blindRegistry.all(), schedulePauseService.pausedAsLastKnown())
             .flatMap(read -> Flux.fromIterable(read.getT1()).concatMap(blind -> view(blind, read.getT2())).collectList())
             .map(views -> {
                 final Map<String, List<BlindView>> byRoom = views.stream()
@@ -53,13 +53,13 @@ public class BlindsQueryService {
     }
 
     public Mono<RoomBlinds> inRoom(final RoomName room) {
-        return Mono.zip(blindRegistry.inRoom(room), schedulePauseService.paused())
+        return Mono.zip(blindRegistry.inRoom(room), schedulePauseService.pausedAsLastKnown())
             .flatMap(read -> Flux.fromIterable(read.getT1()).concatMap(blind -> view(blind, read.getT2())).collectList())
             .map(views -> new RoomBlinds(room.getValue(), views));
     }
 
     public Mono<BlindView> one(final long id) {
-        return Mono.zip(blindRegistry.find(id), schedulePauseService.paused())
+        return Mono.zip(blindRegistry.find(id), schedulePauseService.pausedAsLastKnown())
             .flatMap(read -> view(read.getT1(), read.getT2()));
     }
 

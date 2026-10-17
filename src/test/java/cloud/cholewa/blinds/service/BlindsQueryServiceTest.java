@@ -58,7 +58,7 @@ class BlindsQueryServiceTest {
         when(tracker.status(anyLong())).thenReturn(Mono.just(BlindStatus.unknown()));
         when(tracker.observe(any(), any())).thenReturn(Mono.empty());
         when(windowSensors.stateOf(any())).thenReturn(WindowState.NO_SENSOR);
-        when(pauseService.paused()).thenReturn(Mono.just(Map.of(53L, PAUSED_AT)));
+        when(pauseService.pausedAsLastKnown()).thenReturn(Mono.just(Map.of(53L, PAUSED_AT)));
     }
 
     //the rooms in the order of the SDK, the blinds of a room in the order of the registry
