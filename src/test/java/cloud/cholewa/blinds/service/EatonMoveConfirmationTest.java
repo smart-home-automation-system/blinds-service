@@ -76,7 +76,7 @@ class EatonMoveConfirmationTest {
             .verifyComplete();
 
         verify(driver, never()).requestStatus(any());
-        assertThat(levels()).doesNotContain(Level.WARN);
+        assertThat(log.list).filteredOn(event -> event.getLevel() == Level.WARN).isEmpty();
     }
 
     //nothing within the window of the command: a WARN, and the tracker leaves the state as it is
@@ -121,9 +121,5 @@ class EatonMoveConfirmationTest {
         confirmation.start(KITCHEN, issued);
 
         verify(tracker, never()).awaitingMovement(any(), any());
-    }
-
-    private java.util.List<Level> levels() {
-        return log.list.stream().map(ILoggingEvent::getLevel).toList();
     }
 }
