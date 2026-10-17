@@ -62,6 +62,8 @@ public class WindowSensors {
 
     //the opening sensors of the registry by their id, as last read
     private final AtomicReference<Map<Long, Sensor>> sensors = new AtomicReference<>(Map.of());
+    //the BTHome gateways of the registry, as last read
+    private final AtomicReference<List<Gateway>> gateways = new AtomicReference<>(List.of());
     //which component of which gateway is the window of which sensor
     private final Map<SensorComponent, Long> components = new ConcurrentHashMap<>();
     private final Map<Long, Reading> readings = new ConcurrentHashMap<>();
@@ -100,18 +102,28 @@ public class WindowSensors {
     record Gateway(long id, String name, String address, String deviceId) {
     }
 
-    //never fails: a registry away keeps the last sensors, a gateway away keeps its map and lets its
-    //sensors age until they are unknown
+    //Never fails. A registry away keeps the last sensors and gateways, and the gateways are read all
+    //the same - a database-service down for an hour must not make every window unknown; a gateway
+    //away keeps its map and lets its sensors age until they are unknown
     public Mono<Void> refresh() {
         return Mono.defer(() -> Mono.zip(deviceRegistryClient.getOpeningSensors(), deviceRegistryClient.getBthomeGateways()))
-            .flatMap(read -> {
+            .map(read -> {
                 sensors.set(toSensors(read.getT1()));
-                return Flux.fromIterable(toGateways(read.getT2()))
-                    .concatMap(this::read)
-                    .then();
+                final List<Gateway> listedNow = toGateways(read.getT2());
+                gateways.set(listedNow);
+                //a gateway the registry no longer lists is read no more: its components go with it
+                final Set<String> listed = listedNow.stream().map(Gateway::deviceId).collect(Collectors.toSet());
+                components.keySet().removeIf(key -> !listed.contains(key.gateway()));
+                failing.retainAll(listed);
+                return listedNow;
             })
-            .doOnError(e -> log.warn("The window sensors could not be read from the registry, the last ones stay: {}", e.toString()))
-            .onErrorComplete();
+            .onErrorResume(e -> {
+                log.warn("The window sensors could not be read from the registry, the last ones stay: {}", e.toString());
+                return Mono.just(gateways.get());
+            })
+            .flatMapMany(Flux::fromIterable)
+            .concatMap(this::read)
+            .then();
     }
 
     private Mono<Void> read(final Gateway gateway) {
@@ -203,7 +215,7 @@ public class WindowSensors {
         return stateOf(blind, now());
     }
 
-    WindowState stateOf(final Blind blind, final LocalDateTime now) {
+    public WindowState stateOf(final Blind blind, final LocalDateTime now) {
         final Map<Long, Sensor> known = sensors.get();
         final List<Long> ids = blind.openingSensors().stream()
             .filter(id -> {

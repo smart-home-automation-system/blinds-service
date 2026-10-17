@@ -51,6 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -108,7 +109,7 @@ class ScheduleEngineTest {
         when(commandService.moveTo(anyLong(), anyInt(), any())).thenReturn(Mono.empty());
         when(runRepository.findByFiredOnIn(any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored))
             .filter(run -> call.<Collection<LocalDate>>getArgument(0).contains(run.firedOn())));
-        when(windowSensors.stateOf(any())).thenReturn(WindowState.NO_SENSOR);
+        when(windowSensors.stateOf(any(), any())).thenReturn(WindowState.NO_SENSOR);
         when(runRepository.findByScheduleIdAndFiredOnOrderById(anyLong(), any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored))
             .filter(run -> run.scheduleId() == (long) call.getArgument(0) && run.firedOn().equals(call.getArgument(1))));
         when(runRepository.save(any())).thenAnswer(call -> {
@@ -413,8 +414,8 @@ class ScheduleEngineTest {
     void should_judge_window_closed_by_the_window_of_each_blind() {
         schedules(closeWithTheWindow(true, ScheduleAction.CLOSE, null, List.of(ScheduleTarget.room(RoomName.KITCHEN),
             ScheduleTarget.room(RoomName.OFFICE))));
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.OPEN);
-        when(windowSensors.stateOf(OFFICE)).thenReturn(WindowState.NO_SENSOR);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.NO_SENSOR);
 
         sut.pass().as(StepVerifier::create).verifyComplete();
 
@@ -426,7 +427,7 @@ class ScheduleEngineTest {
     @Test
     void should_not_close_a_blind_whose_window_is_not_known() {
         schedules(closeWithTheWindow(true, ScheduleAction.CLOSE, null, List.of(ScheduleTarget.room(RoomName.KITCHEN))));
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.UNKNOWN);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.UNKNOWN);
 
         sut.pass().as(StepVerifier::create).verifyComplete();
 
@@ -442,7 +443,7 @@ class ScheduleEngineTest {
         final Schedule close = withId(7, closeWithTheWindow(true, ScheduleAction.CLOSE, null,
             List.of(ScheduleTarget.room(RoomName.KITCHEN))));
         schedules(ajar, close);
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
         final Mono<Void> pass = sut.pass();
 
         pass.as(StepVerifier::create).verifyComplete();
@@ -451,14 +452,14 @@ class ScheduleEngineTest {
 
         now.set(FIVE_PM.plusMinutes(20));
         darkness(100, now.get());
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.CLOSED);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.CLOSED);
         pass.as(StepVerifier::create).verifyComplete();
         verify(commandService).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
 
         //opened and closed again: neither fires a second time today
         now.set(FIVE_PM.plusMinutes(30));
         darkness(100, now.get());
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
         pass.as(StepVerifier::create).verifyComplete();
         verify(commandService, times(1)).moveTo(17, 30, CommandSource.SCHEDULE);
         verify(commandService, times(1)).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
@@ -474,13 +475,13 @@ class ScheduleEngineTest {
             .targets(List.of(ScheduleTarget.room(RoomName.KITCHEN), ScheduleTarget.room(RoomName.OFFICE)))
             .conditions(List.of(ScheduleCondition.is(ConditionMetric.WINDOW_CLOSED, true, 5)))
             .build()));
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.CLOSED);
-        when(windowSensors.stateOf(OFFICE)).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.CLOSED);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.OPEN);
         final Mono<Void> pass = sut.pass();
         pass.as(StepVerifier::create).verifyComplete();
 
         now.set(FIVE_PM.plusMinutes(3));
-        when(windowSensors.stateOf(OFFICE)).thenReturn(WindowState.CLOSED);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.CLOSED);
         pass.as(StepVerifier::create).verifyComplete();
         now.set(FIVE_PM.plusMinutes(5));
         pass.as(StepVerifier::create).verifyComplete();
@@ -497,8 +498,8 @@ class ScheduleEngineTest {
         final Schedule schedule = withId(9, closeWithTheWindow(true, ScheduleAction.CLOSE, null,
             List.of(ScheduleTarget.room(RoomName.KITCHEN), ScheduleTarget.room(RoomName.OFFICE))));
         schedules(schedule);
-        when(windowSensors.stateOf(KITCHEN)).thenReturn(WindowState.OPEN);
-        when(windowSensors.stateOf(OFFICE)).thenReturn(WindowState.UNKNOWN);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.UNKNOWN);
 
         sut.pass().as(StepVerifier::create).verifyComplete();
 

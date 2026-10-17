@@ -195,6 +195,18 @@ class WindowSensorsTest {
         assertThat(sut.stateOf(bedroom)).isEqualTo(WindowState.OPEN);
     }
 
+    //a gateway removed from the registry is read no more, and its components are forgotten
+    @Test
+    void should_forget_the_components_of_a_gateway_the_registry_no_longer_lists() {
+        gateway(TREADMILL, "10.0.0.36", window(215, DOOR, false, 1000L));
+        refresh();
+
+        when(registry.getBthomeGateways()).thenReturn(Mono.just(List.of(gateway(80, "OFFICE MAIN", "10.0.0.40", OFFICE_MAIN))));
+        refresh();
+
+        assertThat(sut.knows(TREADMILL, 215)).isFalse();
+    }
+
     //a switched-off sensor is left out of its window; with none left the window has no sensor
     @Test
     void should_leave_a_switched_off_sensor_out_of_its_window() {
@@ -214,6 +226,23 @@ class WindowSensorsTest {
 
         when(registry.getOpeningSensors()).thenReturn(Mono.error(new RegistryCallException("database-service answered 503")));
         sut.refresh().as(StepVerifier::create).verifyComplete();
+
+        assertThat(sut.stateOf(bedroom)).isEqualTo(WindowState.CLOSED);
+    }
+
+    //the gateways last read are read all the same: a registry down for an hour must not make every
+    //window unknown
+    @Test
+    void should_read_the_last_gateways_while_the_registry_is_away() {
+        gateway(TREADMILL, "10.0.0.36", window(215, DOOR, false, 1000L));
+        refresh();
+
+        when(registry.getOpeningSensors()).thenReturn(Mono.error(new RegistryCallException("database-service answered 503")));
+        when(registry.getBthomeGateways()).thenReturn(Mono.error(new RegistryCallException("database-service answered 503")));
+        for (int minutes = 5; minutes <= 60; minutes += 5) {
+            now.set(START.plusMinutes(minutes));
+            refresh();
+        }
 
         assertThat(sut.stateOf(bedroom)).isEqualTo(WindowState.CLOSED);
     }

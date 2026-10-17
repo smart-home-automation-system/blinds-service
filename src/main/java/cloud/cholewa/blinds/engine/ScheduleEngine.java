@@ -216,7 +216,7 @@ public class ScheduleEngine {
         for (final Blind blind : blinds) {
             final List<ConditionStatus> statuses = new ArrayList<>(shared);
             if (ScheduleEvaluator.perBlind(schedule.conditions())) {
-                final WindowState window = windowSensors.stateOf(blind);
+                final WindowState window = windowSensors.stateOf(blind, now);
                 windows.put(blind.id(), window);
                 for (int i = 0; i < schedule.conditions().size(); i++) {
                     final ScheduleCondition condition = schedule.conditions().get(i);
@@ -387,7 +387,7 @@ public class ScheduleEngine {
         int pending = 0;
         int ready = 0;
         for (final Blind blind : blinds) {
-            final WindowState window = windowSensors.stateOf(blind);
+            final WindowState window = windowSensors.stateOf(blind, now);
             final List<ConditionStatus> statuses = new ArrayList<>(shared);
             final List<ConditionStatus> ofTheWindow = new ArrayList<>();
             for (int i = 0; i < schedule.conditions().size(); i++) {
