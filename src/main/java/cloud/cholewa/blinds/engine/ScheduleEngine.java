@@ -19,6 +19,7 @@ import cloud.cholewa.blinds.model.schedule.ScheduleCondition;
 import cloud.cholewa.blinds.model.schedule.ScheduleToday;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.service.BlindsCommandService;
+import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
 import cloud.cholewa.blinds.service.schedule.ScheduleService;
 import cloud.cholewa.blinds.window.WindowSensors;
 import lombok.RequiredArgsConstructor;
@@ -63,6 +64,9 @@ import java.util.stream.Collectors;
 //- A command is sent once and never repeated: a blind that failed is a run (FAILED) all the same,
 //  since it may have moved. A blind the protection holds back is not a run - it is tried again in
 //  the next minute of the window.
+//- A paused blind (HAS-232) is not moved: the run that would have moved it is stored as PAUSED - its
+//  window is used up as by any run - and the pause ends with it. Every schedule that would move the
+//  blind in the same pass is held back too, so two schedules of one minute do not undo the pause.
 //- A decision is logged at INFO when it changes, with its reason, not every minute
 @Slf4j
 @Component
@@ -80,6 +84,7 @@ public class ScheduleEngine {
     private final WeatherClient weatherClient;
     private final HoldTracker holdTracker;
     private final WindowSensors windowSensors;
+    private final SchedulePauseService schedulePauseService;
     private final Clock clock;
 
     private final AtomicReference<WeatherNow> weather = new AtomicReference<>(WeatherNow.unknown());
@@ -120,7 +125,9 @@ public class ScheduleEngine {
         sent.removeIf(key -> key.date().isBefore(yesterday));
 
         return Mono.zip(dayTypes.of(yesterday), dayTypes.of(today), readWeather(now),
-                runRepository.findByFiredOnIn(List.of(yesterday, today)).collectList())
+                runRepository.findByFiredOnIn(List.of(yesterday, today)).collectList(),
+                //without the pauses nothing may fire: a paused blind would be moved
+                schedulePauseService.paused())
             .timeout(PASS_TIMEOUT)
             //nothing is judged without the runs: a minute not seen must not count towards a hold
             .doOnError(e -> holdTracker.retain(Set.of()))
@@ -128,9 +135,10 @@ public class ScheduleEngine {
                 final Days days = days(now, inputs.getT1(), inputs.getT2(), inputs.getT3());
                 final Map<RunDay, Set<Long>> fired = fired(inputs.getT4());
                 final Set<Key> keys = new HashSet<>();
+                final Set<Long> paused = inputs.getT5().keySet();
 
                 return Flux.fromIterable(schedules)
-                    .concatMap(schedule -> judge(schedule, days, fired, keys))
+                    .concatMap(schedule -> judge(schedule, days, fired, keys, paused))
                     .then(Mono.fromRunnable(() -> {
                         holdTracker.retain(keys);
                         final Set<Long> ids = schedules.stream().map(Schedule::id).collect(Collectors.toSet());
@@ -189,7 +197,13 @@ public class ScheduleEngine {
             : new Chosen(today, days.today(), current);
     }
 
-    private Mono<Void> judge(final Schedule schedule, final Days days, final Map<RunDay, Set<Long>> fired, final Set<Key> keys) {
+    private Mono<Void> judge(
+        final Schedule schedule,
+        final Days days,
+        final Map<RunDay, Set<Long>> fired,
+        final Set<Key> keys,
+        final Set<Long> paused
+    ) {
         final LocalDateTime now = days.now();
         final Chosen chosen = chosen(schedule, days);
         final Set<Long> firedIds = fired.getOrDefault(new RunDay(schedule.id(), chosen.date()), Set.of());
@@ -245,7 +259,11 @@ public class ScheduleEngine {
         logDecision(schedule, verdict, chosen, shared, windows, ready.size(), pending.size());
 
         return verdict == Verdict.FIRE
-            ? Flux.fromIterable(ready).concatMap(blind -> fire(schedule, blind, chosen.date(), now)).then()
+            ? Flux.fromIterable(ready)
+                .concatMap(blind -> paused.contains(blind.id())
+                    ? pausedRun(schedule, blind, chosen.date(), now)
+                    : fire(schedule, blind, chosen.date(), now))
+                .then()
             : Mono.empty();
     }
 
@@ -319,6 +337,26 @@ public class ScheduleEngine {
                         + "until a restart: {}", schedule.id(), blind.id(), e.toString()))
                     .onErrorComplete()
                     .then();
+            });
+    }
+
+    //Nothing is sent; the run is stored as any run, so the window is used up, and the pause ends. A
+    //failed write is remembered in this instance as a sent run is; the pause is deleted all the same -
+    //otherwise it would hold back the next window too
+    private Mono<Void> pausedRun(final Schedule schedule, final Blind blind, final LocalDate windowDate, final LocalDateTime now) {
+        final RunKey key = new RunKey(schedule.id(), blind.id(), windowDate);
+        sent.add(key);
+        log.info("Schedule {} ({}) did not move blind {} ({}, {}): its schedules are paused, the pause ends with this run",
+            schedule.id(), schedule.name(), blind.id(), blind.name(), blind.room().getValue());
+
+        return runRepository.save(new ScheduleRunEntity(null, schedule.id(), blind.id(), windowDate, now, RunOutcome.PAUSED))
+            .doOnError(e -> log.error("The paused run of schedule {} for blind {} was not stored, it is remembered "
+                + "until a restart: {}", schedule.id(), blind.id(), e.toString()))
+            .onErrorComplete()
+            .then(schedulePauseService.end(blind.id()))
+            .onErrorResume(e -> {
+                log.error("The pause of blind {} could not be ended, it holds back the next run too: {}", blind.id(), e.toString());
+                return Mono.empty();
             });
     }
 

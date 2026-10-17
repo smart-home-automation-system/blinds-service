@@ -9,7 +9,9 @@ import java.time.LocalDateTime;
  * reported. A field the service does not know is left out - never answered as off, closed or
  * zero. {@code protection} comes with HAS-249.<br>
  * {@code window} - the state of its window by its own sensors (HAS-290): {@code closed},
- * {@code open}, {@code no sensor}, {@code unknown}.
+ * {@code open}, {@code no sensor}, {@code unknown}.<br>
+ * {@code schedulePausedSince} - its schedules are paused since then, until the next run the pause
+ * prevents (HAS-232); left out while they are not.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record BlindView(
@@ -25,10 +27,16 @@ public record BlindView(
     LocalDateTime movedAt,
     String source,
     Boolean reachable,
-    String window
+    String window,
+    LocalDateTime schedulePausedSince
 ) {
 
-    public static BlindView of(final Blind blind, final BlindStatus status, final WindowState window) {
+    public static BlindView of(
+        final Blind blind,
+        final BlindStatus status,
+        final WindowState window,
+        final LocalDateTime schedulePausedSince
+    ) {
         return new BlindView(
             blind.id(),
             blind.name(),
@@ -42,7 +50,8 @@ public record BlindView(
             status.movedAt(),
             status.source(),
             status.reachable(),
-            window == null ? null : window.value()
+            window == null ? null : window.value(),
+            schedulePausedSince
         );
     }
 }

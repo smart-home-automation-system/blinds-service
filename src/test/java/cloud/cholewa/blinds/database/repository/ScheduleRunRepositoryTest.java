@@ -90,6 +90,16 @@ class ScheduleRunRepositoryTest {
             .as(StepVerifier::create).expectNext("UNSUPPORTED").verifyComplete();
     }
 
+    //V4 (HAS-232): a run the pause of the blind held back
+    @Test
+    void should_store_a_paused_run() {
+        sut.save(run(17, DAY, RunOutcome.PAUSED)).as(StepVerifier::create).expectNextCount(1).verifyComplete();
+
+        databaseClient.sql("SELECT outcome FROM blinds_schedule_run WHERE device_id = 17")
+            .map(row -> row.get("outcome", String.class)).one()
+            .as(StepVerifier::create).expectNext("PAUSED").verifyComplete();
+    }
+
     @Test
     void should_refuse_a_second_run_of_a_schedule_for_a_blind_on_the_same_day() {
         sut.save(run(17, DAY, RunOutcome.MOVED)).as(StepVerifier::create).expectNextCount(1).verifyComplete();
