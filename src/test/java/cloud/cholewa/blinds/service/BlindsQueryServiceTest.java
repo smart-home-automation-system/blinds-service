@@ -10,9 +10,11 @@ import cloud.cholewa.blinds.model.BlindStatus;
 import cloud.cholewa.blinds.model.BlindView;
 import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.model.RoomBlinds;
+import cloud.cholewa.blinds.model.WindowState;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
+import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.BlindsPlacement;
 import cloud.cholewa.home.model.RoomName;
 import cloud.cholewa.home.model.SmartVendor;
@@ -42,12 +44,14 @@ class BlindsQueryServiceTest {
 
     private final BlindRegistry registry = mock(BlindRegistry.class);
     private final BlindStateTracker tracker = mock(BlindStateTracker.class);
-    private final BlindsQueryService service = new BlindsQueryService(registry, tracker);
+    private final WindowSensors windowSensors = mock(WindowSensors.class);
+    private final BlindsQueryService service = new BlindsQueryService(registry, tracker, windowSensors);
 
     @BeforeEach
     void setUp() {
         when(tracker.status(anyLong())).thenReturn(Mono.just(BlindStatus.unknown()));
         when(tracker.observe(any(), any())).thenReturn(Mono.empty());
+        when(windowSensors.stateOf(any())).thenReturn(WindowState.NO_SENSOR);
     }
 
     //the rooms in the order of the SDK, the blinds of a room in the order of the registry
@@ -62,7 +66,7 @@ class BlindsQueryServiceTest {
                 assertThat(rooms).extracting(RoomBlinds::room).containsExactly("office", "kitchen");
                 assertThat(rooms.get(0).blinds()).extracting(BlindView::id).containsExactly(52L, 53L);
                 assertThat(rooms.get(0).blinds().get(1)).isEqualTo(new BlindView(53, "Blind 53", "office", "shelly",
-                    "external", true, "closed", 0, "close", MOVED, "SHC", true));
+                    "external", true, "closed", 0, "close", MOVED, "SHC", true, "no sensor"));
             })
             .verifyComplete();
     }

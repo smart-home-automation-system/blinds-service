@@ -6,7 +6,8 @@ HAS-243 it consumes the device events; since HAS-244 it knows the blinds from th
 and moves them on command through three drivers; since HAS-245 it tracks the real state of every
 blind from what the devices report and serves it (`GET /home/blinds`, `/rooms/{room}`, `/{id}`);
 since HAS-246 it stores the schedules (`/home/blinds/schedules`, CRUD); since HAS-247 the schedule
-engine runs them every minute and `GET /schedules/{id}/today` shows what it makes of one.
+engine runs them every minute and `GET /schedules/{id}/today` shows what it makes of one; since
+HAS-290 it reads the window sensors of every blind, and a window may run past midnight.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -22,7 +23,7 @@ review.
   (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
 - Uses libraries: `cholewa-commons` 1.9.0 (pool, error contract, connection names,
-  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.10.0 (`SmartDevice` of
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.11.0 (`SmartDevice` of
   the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.1.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
 - Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
@@ -146,10 +147,19 @@ review.
   - **What is not known never holds**: a weather metric missing, `stale`, or measured more than
     10 min ago; a time of the sun the day does not have. The schedule that needs it does not fire,
     the others do. A failed calendar read means the weekday alone (WARN), asked again after 10 min.
-  - **`window closed` is always unknown** - no window sensor exists in the house yet; a schedule
-    with that condition never fires. The decoding (BTHome `0x2D` through the gateways, Gen1
-    Door/Window 2 on `/events/gen1`) is a task of its own (owner, 2026-10-16).
-  - **Once a day per schedule and blind**: the runs of the day are read before anything fires (a
+  - **`window closed` is judged per blind** (HAS-290), never per room: `ScheduleEvaluator.truth`
+    takes the `WindowState` of the blind, the engine evaluates a schedule with such a condition for
+    every blind of its targets, and the hold of that condition is the blind's own
+    (`HoldTracker.Key` with `blindId`); the weather conditions stay per schedule. A blind fires when
+    it is pending and every one of its conditions is met (`ready`); `decide` takes the counts.
+  - **A window may cross midnight** (HAS-290): `ScheduleEvaluator.occurrence` resolves the window
+    that opens on a date (an end before the start is the next day's, a sunrise of the next day's
+    sun), `current` picks yesterday's night while it lasts - on a day it runs on - else today's.
+    The night belongs to the day it opened on: its day type, its sun, its `fired_on`. So the pass
+    reads the runs of yesterday and today (`findByFiredOnIn`), and `DayTypes` / `SunCalendar`
+    keep a few days around today (they kept one before - asking two days every minute would have
+    called the calendar every minute).
+  - **Once a window per schedule and blind**: the runs are read before anything fires (a
     failed read fires nothing), the blind is remembered in memory **before** its command is sent,
     the row after it (`UNIQUE (schedule_id, device_id, fired_on)`). A failed command is a run
     (`FAILED`) and is never repeated; a position for a blind without one is `UNSUPPORTED`; a blind
@@ -163,6 +173,24 @@ review.
   - `GET /schedules/{id}/today` changes nothing: the weather of the last pass, the holds as it
     left them; its `decision` and `state` values are the `@JsonValue`s of `Verdict` /
     `ConditionStatus` - the dashboard will copy them.
+- **The window sensors (HAS-290)**, package `window`: `WindowSensors` reads the opening sensors
+  (every one, a switched-off one is left out of its window) and the switched-on BTHome gateways from
+  the registry every five minutes (`WindowSensorsRefresh`), then each gateway with
+  `ShellyRpcClient.dynamicComponents` - the `bthomesensor` components of object `0x2D` (45) whose
+  `addr` is a registered sensor, with their status - the way `SensorMapLoader` of weather-service
+  maps its station. `BlindEventRouter` hands it a `bthomesensor` status topic only when `knows()`
+  says the component is one of them, before the body is read.
+  - **A BLU Door/Window has no heartbeat** (measured 2026-10-17: 82 min silent while untouched;
+    beacon mode is off): the owner chose "the last state holds" - a sensor is unknown only when it
+    never reported, or its gateway has neither published it nor answered a read for
+    `blinds.window.gateway-silent-after` (`WindowProperties`, PT30M, 10 min - 24 h, minutes).
+    Do not reintroduce a per-sensor silence bound.
+  - `open` beats `unknown` beats `closed` across the sensors of one window; the newer
+    `last_updated_ts` wins between a read and a publish. A value that is no boolean is ignored.
+  - The state lives in memory: after a restart a window is unknown until the first read of its
+    gateway (seconds - the refresh starts at once).
+  - The Gen1 Door/Window 2 of the sauna entrance is out (owner, 2026-10-17): `/events/gen1` still
+    takes Gen1 blinds only.
 - **One instance, `Recreate`, never scaled**: the schedule engine lives in its memory (holds, the
   blinds sent today). `@EnableScheduling` is in `SchedulingConfig` under `@Profile("!test")`.
 - **What has no default in `home`** - the two broker passwords and the place of the house - is

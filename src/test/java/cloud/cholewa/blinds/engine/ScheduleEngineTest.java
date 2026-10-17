@@ -10,6 +10,7 @@ import cloud.cholewa.blinds.error.BlindsException;
 import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindCommand;
 import cloud.cholewa.blinds.model.CommandSource;
+import cloud.cholewa.blinds.model.WindowState;
 import cloud.cholewa.blinds.model.schedule.ConditionMetric;
 import cloud.cholewa.blinds.model.schedule.ConditionOperator;
 import cloud.cholewa.blinds.model.schedule.Schedule;
@@ -23,6 +24,7 @@ import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.service.BlindsCommandService;
 import cloud.cholewa.blinds.service.schedule.ScheduleFixtures;
 import cloud.cholewa.blinds.service.schedule.ScheduleService;
+import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.DayType;
 import cloud.cholewa.home.model.RoomName;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +42,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -48,6 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -73,10 +77,11 @@ class ScheduleEngineTest {
     private final DayTypes dayTypes = mock(DayTypes.class);
     private final SunCalendar sunCalendar = mock(SunCalendar.class);
     private final WeatherClient weatherClient = mock(WeatherClient.class);
+    private final WindowSensors windowSensors = mock(WindowSensors.class);
     private final List<ScheduleRunEntity> stored = new ArrayList<>();
 
     private final ScheduleEngine sut = new ScheduleEngine(scheduleService, runRepository, blindRegistry, commandService,
-        dayTypes, sunCalendar, weatherClient, new HoldTracker(), new Clock() {
+        dayTypes, sunCalendar, weatherClient, new HoldTracker(), windowSensors, new Clock() {
         @Override
         public ZoneId getZone() {
             return HOUSE;
@@ -102,8 +107,9 @@ class ScheduleEngineTest {
         darkness(100);
         when(commandService.move(anyLong(), any(), any())).thenReturn(Mono.empty());
         when(commandService.moveTo(anyLong(), anyInt(), any())).thenReturn(Mono.empty());
-        when(runRepository.findByFiredOn(any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored))
-            .filter(run -> run.firedOn().equals(call.getArgument(0))));
+        when(runRepository.findByFiredOnIn(any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored))
+            .filter(run -> call.<Collection<LocalDate>>getArgument(0).contains(run.firedOn())));
+        when(windowSensors.stateOf(any(), any())).thenReturn(WindowState.NO_SENSOR);
         when(runRepository.findByScheduleIdAndFiredOnOrderById(anyLong(), any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored))
             .filter(run -> run.scheduleId() == (long) call.getArgument(0) && run.firedOn().equals(call.getArgument(1))));
         when(runRepository.save(any())).thenAnswer(call -> {
@@ -246,7 +252,7 @@ class ScheduleEngineTest {
     @Test
     void should_fire_nothing_when_the_runs_of_the_day_cannot_be_read() {
         schedules(closeTheKitchen(0));
-        when(runRepository.findByFiredOn(any())).thenReturn(Flux.error(new IllegalStateException("pool exhausted")));
+        when(runRepository.findByFiredOnIn(any())).thenReturn(Flux.error(new IllegalStateException("pool exhausted")));
 
         sut.pass().as(StepVerifier::create).verifyComplete();
 
@@ -260,12 +266,12 @@ class ScheduleEngineTest {
         final Mono<Void> pass = sut.pass();
         pass.as(StepVerifier::create).verifyComplete();
 
-        when(runRepository.findByFiredOn(any())).thenReturn(Flux.error(new IllegalStateException("pool exhausted")));
+        when(runRepository.findByFiredOnIn(any())).thenReturn(Flux.error(new IllegalStateException("pool exhausted")));
         now.set(FIVE_PM.plusMinutes(1));
         darkness(100, now.get());
         pass.as(StepVerifier::create).verifyComplete();
 
-        when(runRepository.findByFiredOn(any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored)));
+        when(runRepository.findByFiredOnIn(any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored)));
         now.set(FIVE_PM.plusMinutes(5));
         darkness(100, now.get());
         pass.as(StepVerifier::create).verifyComplete();
@@ -361,7 +367,7 @@ class ScheduleEngineTest {
                 assertThat(today.dayType()).isEqualTo("workday");
                 assertThat(today.dayTypeFromCalendar()).isTrue();
                 assertThat(today.runsToday()).isTrue();
-                assertThat(today.window()).isEqualTo(new ScheduleToday.Window(LocalTime.of(16, 0), LocalTime.of(18, 0)));
+                assertThat(today.window()).isEqualTo(new ScheduleToday.Window(LocalTime.of(16, 0), LocalTime.of(18, 0), null));
                 assertThat(today.conditions()).singleElement().satisfies(condition -> {
                     assertThat(condition.current()).isEqualTo(100);
                     assertThat(condition.measuredAt()).isEqualTo(FIVE_PM);
@@ -384,8 +390,8 @@ class ScheduleEngineTest {
         sut.today(schedule).as(StepVerifier::create)
             .assertNext(today -> {
                 assertThat(today.targets()).containsExactly(
-                    new ScheduleToday.Target(17, "Blind 17", "kitchen", FIVE_PM, RunOutcome.MOVED),
-                    new ScheduleToday.Target(99, null, null, DAY.atTime(16, 1), RunOutcome.MOVED));
+                    new ScheduleToday.Target(17, "Blind 17", "kitchen", WindowState.NO_SENSOR, null, FIVE_PM, RunOutcome.MOVED),
+                    new ScheduleToday.Target(99, null, null, null, null, DAY.atTime(16, 1), RunOutcome.MOVED));
                 assertThat(today.decision()).isEqualTo(Verdict.FIRED);
             })
             .verifyComplete();
@@ -399,6 +405,225 @@ class ScheduleEngineTest {
 
         final ArgumentCaptor<Long> ids = ArgumentCaptor.forClass(Long.class);
         verify(commandService, never()).move(ids.capture(), any(), any());
+    }
+
+    //--- the windows of the blinds (HAS-290)
+
+    //per blind, never per room: the kitchen window is open, the office has no sensor - the office closes
+    @Test
+    void should_judge_window_closed_by_the_window_of_each_blind() {
+        schedules(closeWithTheWindow(true, ScheduleAction.CLOSE, null, List.of(ScheduleTarget.room(RoomName.KITCHEN),
+            ScheduleTarget.room(RoomName.OFFICE))));
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.NO_SENSOR);
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        verify(commandService).move(52, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        verify(commandService, never()).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+    }
+
+    //a sensor that is not known never passes for a closed window
+    @Test
+    void should_not_close_a_blind_whose_window_is_not_known() {
+        schedules(closeWithTheWindow(true, ScheduleAction.CLOSE, null, List.of(ScheduleTarget.room(RoomName.KITCHEN))));
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.UNKNOWN);
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        verify(commandService, never()).move(anyLong(), any(), any());
+    }
+
+    //The evening of the owner: the window open sends the blind to 30, and once the window is closed
+    //later in the evening the close schedule closes it fully - once a day is per schedule and blind
+    @Test
+    void should_send_a_blind_to_30_with_the_window_open_and_close_it_once_the_window_is_closed() {
+        final Schedule ajar = withId(6, closeWithTheWindow(false, ScheduleAction.POSITION, 30,
+            List.of(ScheduleTarget.room(RoomName.KITCHEN))));
+        final Schedule close = withId(7, closeWithTheWindow(true, ScheduleAction.CLOSE, null,
+            List.of(ScheduleTarget.room(RoomName.KITCHEN))));
+        schedules(ajar, close);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
+        final Mono<Void> pass = sut.pass();
+
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService).moveTo(17, 30, CommandSource.SCHEDULE);
+        verify(commandService, never()).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+
+        now.set(FIVE_PM.plusMinutes(20));
+        darkness(100, now.get());
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.CLOSED);
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+
+        //opened and closed again: neither fires a second time today
+        now.set(FIVE_PM.plusMinutes(30));
+        darkness(100, now.get());
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService, times(1)).moveTo(17, 30, CommandSource.SCHEDULE);
+        verify(commandService, times(1)).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        assertThat(stored).extracting(ScheduleRunEntity::scheduleId).containsExactly(6L, 7L);
+    }
+
+    //the hold of window closed is the blind's own
+    @Test
+    void should_hold_window_closed_for_each_blind_on_its_own() {
+        schedules(withId(8, ScheduleFixtures.sunsetClose()
+            .from(WindowEnd.clock(LocalTime.of(16, 0)))
+            .to(WindowEnd.clock(LocalTime.of(18, 0)))
+            .targets(List.of(ScheduleTarget.room(RoomName.KITCHEN), ScheduleTarget.room(RoomName.OFFICE)))
+            .conditions(List.of(ScheduleCondition.is(ConditionMetric.WINDOW_CLOSED, true, 5)))
+            .build()));
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.CLOSED);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.OPEN);
+        final Mono<Void> pass = sut.pass();
+        pass.as(StepVerifier::create).verifyComplete();
+
+        now.set(FIVE_PM.plusMinutes(3));
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.CLOSED);
+        pass.as(StepVerifier::create).verifyComplete();
+        now.set(FIVE_PM.plusMinutes(5));
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        verify(commandService, never()).move(52, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+
+        now.set(FIVE_PM.plusMinutes(8));
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService).move(52, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+    }
+
+    @Test
+    void should_show_the_window_of_each_target_today() {
+        final Schedule schedule = withId(9, closeWithTheWindow(true, ScheduleAction.CLOSE, null,
+            List.of(ScheduleTarget.room(RoomName.KITCHEN), ScheduleTarget.room(RoomName.OFFICE))));
+        schedules(schedule);
+        when(windowSensors.stateOf(eq(KITCHEN), any())).thenReturn(WindowState.OPEN);
+        when(windowSensors.stateOf(eq(OFFICE), any())).thenReturn(WindowState.UNKNOWN);
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        sut.today(schedule).as(StepVerifier::create)
+            .assertNext(today -> {
+                assertThat(today.conditions()).extracting(ScheduleToday.Condition::state)
+                    .containsExactly(ConditionStatus.MET, ConditionStatus.PER_BLIND);
+                assertThat(today.targets()).extracting(ScheduleToday.Target::window)
+                    .containsExactly(WindowState.OPEN, WindowState.UNKNOWN);
+                assertThat(today.targets()).extracting(ScheduleToday.Target::windowClosed)
+                    .containsExactly(ConditionStatus.NOT_MET, ConditionStatus.UNKNOWN);
+                assertThat(today.decision()).isEqualTo(Verdict.WAITING);
+            })
+            .verifyComplete();
+    }
+
+    //--- a window across midnight (HAS-290)
+
+    //21:00 to 06:00: the conditions first hold after midnight - the run counts for the night that
+    //opened the day before, and the blind is moved once that night, then again the next night
+    @Test
+    void should_fire_a_night_window_once_per_night_also_after_midnight() {
+        schedules(night());
+        darkness(1000, DAY.atTime(22, 0));
+        now.set(DAY.atTime(22, 0));
+        final Mono<Void> pass = sut.pass();
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService, never()).move(anyLong(), any(), any());
+
+        now.set(DAY.plusDays(1).atTime(1, 0));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+        now.set(DAY.plusDays(1).atTime(1, 1));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+        now.set(DAY.plusDays(1).atTime(5, 59));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+
+        verify(commandService, times(1)).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        assertThat(stored).singleElement().satisfies(run -> {
+            assertThat(run.firedOn()).isEqualTo(DAY);
+            assertThat(run.firedAt()).isEqualTo(DAY.plusDays(1).atTime(1, 0));
+        });
+
+        now.set(DAY.plusDays(1).atTime(21, 0));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService, times(2)).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        assertThat(stored).extracting(ScheduleRunEntity::firedOn).containsExactly(DAY, DAY.plusDays(1));
+    }
+
+    //a run stored before a restart, in the evening, keeps the night from firing again after midnight
+    @Test
+    void should_not_fire_a_night_again_after_midnight_for_a_run_of_the_evening() {
+        schedules(night());
+        stored.add(new ScheduleRunEntity(1L, 10, 17, DAY, DAY.atTime(21, 5), RunOutcome.MOVED));
+        now.set(DAY.plusDays(1).atTime(0, 30));
+        darkness(100, now.get());
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        verify(commandService, never()).move(anyLong(), any(), any());
+    }
+
+    //the night belongs to the day it opened on: a night of a workday schedule after a Friday runs,
+    //after a Saturday it does not
+    @Test
+    void should_judge_a_night_by_the_type_of_the_day_it_opened_on() {
+        schedules(withId(11, ScheduleFixtures.sunsetClose()
+            .dayType(ScheduleDayType.DAY_OFF)
+            .from(WindowEnd.clock(LocalTime.of(21, 0)))
+            .to(WindowEnd.clock(LocalTime.of(6, 0)))
+            .targets(List.of(ScheduleTarget.room(RoomName.KITCHEN)))
+            .conditions(List.of())
+            .build()));
+        when(dayTypes.of(any())).thenAnswer(call -> Mono.just(new TodayType(call.getArgument(0),
+            call.getArgument(0).equals(DAY) ? DayType.DAY_OFF : DayType.WORKDAY, true, Instant.EPOCH)));
+        now.set(DAY.plusDays(1).atTime(2, 0));
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        verify(commandService).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        assertThat(stored).singleElement().satisfies(run -> assertThat(run.firedOn()).isEqualTo(DAY));
+    }
+
+    @Test
+    void should_show_a_night_window_by_the_day_it_opened_on() {
+        final Schedule schedule = night();
+        schedules(schedule);
+        now.set(DAY.plusDays(1).atTime(2, 0));
+
+        sut.today(schedule).as(StepVerifier::create)
+            .assertNext(today -> {
+                assertThat(today.date()).isEqualTo(DAY);
+                assertThat(today.window()).isEqualTo(new ScheduleToday.Window(LocalTime.of(21, 0), LocalTime.of(6, 0), true));
+            })
+            .verifyComplete();
+    }
+
+    //the kitchen from 21:00 to 06:00 when darker than 200 lx
+    private static Schedule night() {
+        return withId(10, ScheduleFixtures.sunsetClose()
+            .from(WindowEnd.clock(LocalTime.of(21, 0)))
+            .to(WindowEnd.clock(LocalTime.of(6, 0)))
+            .targets(List.of(ScheduleTarget.room(RoomName.KITCHEN)))
+            .conditions(List.of(ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.LT,
+                BigDecimal.valueOf(200), 0)))
+            .build());
+    }
+
+    //16:00 to 18:00, darker than 200 lx and the window closed as given
+    private static Schedule closeWithTheWindow(final boolean closed, final ScheduleAction action, final Integer position,
+                                               final List<ScheduleTarget> targets) {
+        return withId(5, ScheduleFixtures.sunsetClose()
+            .from(WindowEnd.clock(LocalTime.of(16, 0)))
+            .to(WindowEnd.clock(LocalTime.of(18, 0)))
+            .targets(targets)
+            .conditions(List.of(
+                ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.LT, BigDecimal.valueOf(200), 0),
+                ScheduleCondition.is(ConditionMetric.WINDOW_CLOSED, closed, 0)))
+            .action(action)
+            .position(position)
+            .build());
     }
 
     //the kitchen between 16:00 and 18:00 when darker than 200 lx for the hold given

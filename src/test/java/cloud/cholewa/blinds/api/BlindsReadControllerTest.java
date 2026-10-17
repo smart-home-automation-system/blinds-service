@@ -41,10 +41,10 @@ import static org.mockito.Mockito.when;
 class BlindsReadControllerTest {
 
     private static final BlindView DOOR = new BlindView(53, "Office door", "office", "shelly", "external", true,
-        "stopped", 40, "close", LocalDateTime.of(2026, 10, 15, 18, 0, 5), "SHC", true);
+        "stopped", 40, "close", LocalDateTime.of(2026, 10, 15, 18, 0, 5), "SHC", true, "closed");
     //nothing heard of it yet
     private static final BlindView KITCHEN = new BlindView(17, "Kitchen window", "kitchen", "eaton", "external", false,
-        null, null, null, null, null, null);
+        null, null, null, null, null, null, null);
 
     private final ListAppender<ILoggingEvent> processorLog = new ListAppender<>();
 

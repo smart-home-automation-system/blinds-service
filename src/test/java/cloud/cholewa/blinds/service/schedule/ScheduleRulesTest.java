@@ -58,6 +58,9 @@ class ScheduleRulesTest {
             arguments(named("a time of the sun with only the earliest",
                 sunsetClose().from(WindowEnd.sun(WindowKind.SUNSET, 0, LocalTime.of(17, 0), null)).build())),
             //the order is known only on the day: the engine resolves it
+            //HAS-290: a night, 21:00 to 06:00 - the end is the next day
+            arguments(named("a clock window across midnight",
+                sunsetClose().from(WindowEnd.clock(LocalTime.of(21, 0))).to(WindowEnd.clock(LocalTime.of(6, 0))).build())),
             arguments(named("a time of the sun after a clock time",
                 sunsetClose().from(WindowEnd.clock(LocalTime.of(22, 0)))
                     .to(WindowEnd.sun(WindowKind.SUNRISE, 0, null, null)).build())),
@@ -130,10 +133,8 @@ class ScheduleRulesTest {
             refused("a latest at the earliest",
                 sunsetClose().from(WindowEnd.sun(WindowKind.SUNSET, 0, LocalTime.of(17, 0), LocalTime.of(17, 0))),
                 "window.from.latest is after window.from.earliest"),
-            refused("a clock window across midnight", summerShading().from(WindowEnd.clock(LocalTime.of(22, 0)))
-                .to(WindowEnd.clock(LocalTime.of(6, 0))), "window.to is after window.from when both are clock times"),
             refused("an empty clock window", summerShading().to(WindowEnd.clock(LocalTime.of(11, 0))),
-                "window.to is after window.from when both are clock times"),
+                "window.to differs from window.from when both are clock times - an earlier to is the next day"),
 
             refused("no targets", sunsetClose().targets(null), "targets has at least one room or blind"),
             refused("an empty target list", sunsetClose().targets(List.of()), "targets has at least one room or blind"),

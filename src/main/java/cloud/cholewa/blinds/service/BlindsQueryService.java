@@ -9,6 +9,7 @@ import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindReadings;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
+import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.RoomName;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ public class BlindsQueryService {
 
     private final BlindRegistry blindRegistry;
     private final BlindStateTracker blindStateTracker;
+    private final WindowSensors windowSensors;
 
     //every blind, by room in the order of the rooms of the SDK, each room's in the order of the registry
     public Mono<List<RoomBlinds>> all() {
@@ -76,6 +78,6 @@ public class BlindsQueryService {
     }
 
     private Mono<BlindView> view(final Blind blind) {
-        return blindStateTracker.status(blind.id()).map(status -> BlindView.of(blind, status));
+        return blindStateTracker.status(blind.id()).map(status -> BlindView.of(blind, status, windowSensors.stateOf(blind)));
     }
 }

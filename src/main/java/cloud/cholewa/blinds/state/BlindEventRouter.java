@@ -3,11 +3,13 @@ package cloud.cholewa.blinds.state;
 import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindBinding;
 import cloud.cholewa.blinds.registry.BlindRegistry;
+import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.DeviceEvent;
 import cloud.cholewa.home.model.EatonRxEvent;
 import cloud.cholewa.shelly.codec.ShellyEvent;
 import cloud.cholewa.shelly.codec.ShellyMqttDecoder;
 import cloud.cholewa.shelly.codec.ShellyTopic;
+import cloud.cholewa.shelly.model.BthomeSensorStatus;
 import cloud.cholewa.shelly.model.CoverStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +28,8 @@ import java.util.List;
 //  actuator of the cinema reports on it too, so it could not stand for every blind anyway
 //- <deviceId>.status.cover:<channel> and <deviceId>.online of a Gen2+ blind, decoded by shelly-client;
 //  the id matched whatever its case - one copied from the page of the device may be upper case.
+//- <gatewayId>.status.bthomesensor:<id> of a component the window sensors know (HAS-290) - the state
+//  of a window, {id, value, last_updated_ts}, published by the gateway when it changes.
 //A body that is not what its topic carries is an error for the consumer to log
 @Slf4j
 @Component
@@ -34,11 +38,13 @@ public class BlindEventRouter {
 
     private static final String EATON_BLINDS = "eaton.blinds.";
     private static final String COVER = "cover";
+    private static final String BTHOME_SENSOR = "bthomesensor";
 
     private final BlindRegistry blindRegistry;
     private final BlindStateTracker blindStateTracker;
     private final ShellyMqttDecoder shellyMqttDecoder;
     private final JsonMapper jsonMapper;
+    private final WindowSensors windowSensors;
 
     public Mono<Void> route(final String routingKey, final byte[] body) {
         if (routingKey == null) {
@@ -71,6 +77,11 @@ public class BlindEventRouter {
     }
 
     private Mono<Void> shelly(final ShellyTopic topic, final byte[] body) {
+        if (topic.kind() == ShellyTopic.Kind.STATUS && BTHOME_SENSOR.equals(topic.component())
+            && windowSensors.knows(topic.deviceId(), topic.index())) {
+            return window(topic, body);
+        }
+
         final List<Blind> blinds = blindRegistry.current().stream()
             .filter(blind -> blind.binding() instanceof BlindBinding.ShellyGen2 cover
                 && topic.deviceId().equalsIgnoreCase(cover.deviceId()))
@@ -107,6 +118,15 @@ public class BlindEventRouter {
             .flatMap(status -> Mono.justOrEmpty(status.as(CoverStatus.class)))
             .flatMap(cover -> Mono.justOrEmpty(BlindReadings.ofCover(cover)))
             .flatMap(reading -> blindStateTracker.observe(blind, reading));
+    }
+
+    private Mono<Void> window(final ShellyTopic topic, final byte[] body) {
+        return Mono.fromCallable(() -> shellyMqttDecoder.decode(topic, body))
+            .flatMap(Mono::justOrEmpty)
+            .cast(ShellyEvent.Status.class)
+            .flatMap(status -> Mono.justOrEmpty(status.as(BthomeSensorStatus.class)))
+            .doOnNext(status -> windowSensors.observe(topic.deviceId(), topic.index(), status))
+            .then();
     }
 
     private static Integer point(final String text) {

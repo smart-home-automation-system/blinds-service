@@ -16,8 +16,15 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class HoldTracker {
 
-    /** A condition of a schedule. */
-    public record Key(long scheduleId, ScheduleCondition condition) {
+    /**
+     * A condition of a schedule; {@code blindId} - the blind a window closed condition is judged for
+     * (HAS-290), null for a condition of the schedule as a whole.
+     */
+    public record Key(long scheduleId, ScheduleCondition condition, Long blindId) {
+
+        public Key(final long scheduleId, final ScheduleCondition condition) {
+            this(scheduleId, condition, null);
+        }
     }
 
     private final Map<Key, LocalDateTime> trueSince = new ConcurrentHashMap<>();

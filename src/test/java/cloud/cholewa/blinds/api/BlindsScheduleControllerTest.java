@@ -17,6 +17,7 @@ import cloud.cholewa.blinds.error.processor.BlindsExceptionProcessor;
 import cloud.cholewa.blinds.model.schedule.Schedule;
 import cloud.cholewa.blinds.service.BlindsCommandService;
 import cloud.cholewa.blinds.service.BlindsQueryService;
+import cloud.cholewa.blinds.model.WindowState;
 import cloud.cholewa.blinds.service.schedule.ScheduleService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -260,16 +261,17 @@ class BlindsScheduleControllerTest {
             "workday",
             true,
             true,
-            new ScheduleToday.Window(LocalTime.of(17, 17), LocalTime.of(23, 0)),
+            new ScheduleToday.Window(LocalTime.of(17, 17), LocalTime.of(23, 0), null),
             List.of(
                 new ScheduleToday.Condition(ConditionMetric.ILLUMINANCE, ConditionOperator.LT, BigDecimal.valueOf(200), null,
                     10, 150, LocalDateTime.of(2026, 10, 16, 17, 20, 5), LocalDateTime.of(2026, 10, 16, 17, 18, 0),
                     ConditionStatus.MET),
                 new ScheduleToday.Condition(ConditionMetric.WINDOW_CLOSED, ConditionOperator.IS, null, true,
-                    0, null, null, null, ConditionStatus.UNKNOWN)),
+                    0, null, null, null, ConditionStatus.PER_BLIND)),
             List.of(
-                new ScheduleToday.Target(53, "Office door", "office", LocalDateTime.of(2026, 10, 16, 17, 28, 0), RunOutcome.MOVED),
-                new ScheduleToday.Target(52, "Office window", "office", null, null)),
+                new ScheduleToday.Target(53, "Office door", "office", WindowState.CLOSED, ConditionStatus.MET,
+                    LocalDateTime.of(2026, 10, 16, 17, 28, 0), RunOutcome.MOVED),
+                new ScheduleToday.Target(52, "Office window", "office", WindowState.UNKNOWN, ConditionStatus.UNKNOWN, null, null)),
             Verdict.FIRE)));
 
         webTestClient.get().uri("/schedules/1/today")
@@ -290,12 +292,17 @@ class BlindsScheduleControllerTest {
             .jsonPath("$.conditions[0].state").isEqualTo("met")
             .jsonPath("$.conditions[1].metric").isEqualTo("window closed")
             .jsonPath("$.conditions[1].value").isEqualTo(true)
-            .jsonPath("$.conditions[1].state").isEqualTo("unknown")
+            .jsonPath("$.conditions[1].state").isEqualTo("per blind")
             .jsonPath("$.conditions[1].current").doesNotExist()
             .jsonPath("$.conditions[1].trueSince").doesNotExist()
             .jsonPath("$.targets[0].outcome").isEqualTo("moved")
             .jsonPath("$.targets[0].firedAt").isEqualTo("2026-10-16T17:28:00")
             .jsonPath("$.targets[1].outcome").doesNotExist()
+            .jsonPath("$.targets[0].window").isEqualTo("closed")
+            .jsonPath("$.targets[0].windowClosed").isEqualTo("met")
+            .jsonPath("$.targets[1].window").isEqualTo("unknown")
+            .jsonPath("$.targets[1].windowClosed").isEqualTo("unknown")
+            .jsonPath("$.window.nextDay").doesNotExist()
             .jsonPath("$.decision").isEqualTo("fires");
     }
 

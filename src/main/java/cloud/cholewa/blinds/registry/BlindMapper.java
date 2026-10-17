@@ -7,6 +7,8 @@ import cloud.cholewa.home.model.ShellyBinding;
 import cloud.cholewa.home.model.SmartDevice;
 import cloud.cholewa.home.model.SmartVendor;
 
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 //A device of the registry as a blind - or nothing, when the registry holds too little to drive it:
@@ -31,7 +33,10 @@ final class BlindMapper {
             device.getVendor(),
             binding,
             device.getPlacement(),
-            Boolean.TRUE.equals(device.getPositioning()) && !(binding instanceof BlindBinding.Eaton)
+            Boolean.TRUE.equals(device.getPositioning()) && !(binding instanceof BlindBinding.Eaton),
+            //a null among them is no sensor (the registry refuses one)
+            device.getOpeningSensors() == null ? List.of()
+                : device.getOpeningSensors().stream().filter(Objects::nonNull).toList()
         ));
     }
 
