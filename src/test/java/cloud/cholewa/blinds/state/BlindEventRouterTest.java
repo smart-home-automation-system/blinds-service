@@ -6,6 +6,7 @@ import cloud.cholewa.blinds.model.BlindReading;
 import cloud.cholewa.blinds.model.BlindState;
 import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.registry.BlindRegistry;
+import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.BlindsPlacement;
 import cloud.cholewa.home.model.RoomName;
 import cloud.cholewa.home.model.SmartVendor;
@@ -24,8 +25,11 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -43,8 +47,9 @@ class BlindEventRouterTest {
     private final BlindRegistry registry = mock(BlindRegistry.class);
     private final BlindStateTracker tracker = mock(BlindStateTracker.class);
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
+    private final WindowSensors windowSensors = mock(WindowSensors.class);
     private final BlindEventRouter router =
-        new BlindEventRouter(registry, tracker, new ShellyMqttDecoder(jsonMapper), jsonMapper);
+        new BlindEventRouter(registry, tracker, new ShellyMqttDecoder(jsonMapper), jsonMapper, windowSensors);
 
     @BeforeEach
     void setUp() {
@@ -168,6 +173,28 @@ class BlindEventRouterTest {
         route("shellyplus2pm-08a6f77e5e34.status.cover:0", "{}");
 
         verifyNoInteractions(tracker);
+    }
+
+    //HAS-290: the window of a sensor the window sensors know, decoded and handed to them
+    @Test
+    void should_hand_the_window_of_a_known_sensor_to_the_window_sensors() {
+        when(windowSensors.knows("shellyplugsg3-28372f2f0460", 215)).thenReturn(true);
+
+        route("shellyplugsg3-28372f2f0460.status.bthomesensor:215", """
+            {"id":215,"value":true,"last_updated_ts":1792235311}""");
+
+        verify(windowSensors).observe(eq("shellyplugsg3-28372f2f0460"), eq(215),
+            argThat(status -> Boolean.TRUE.equals(status.getValue()) && status.getLastUpdatedTs() == 1792235311L));
+    }
+
+    //every other bthomesensor (the weather station, a battery) is not read at all
+    @Test
+    void should_not_read_a_sensor_the_window_sensors_do_not_know() {
+        when(windowSensors.knows(any(), any())).thenReturn(false);
+
+        route("shellyplugsg3-28372f2f0460.status.bthomesensor:205", "not even json");
+
+        verify(windowSensors, never()).observe(any(), anyInt(), any());
     }
 
     private void route(final String routingKey, final String body) {

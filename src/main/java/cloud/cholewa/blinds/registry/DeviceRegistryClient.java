@@ -12,6 +12,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Optional;
 
 //The switched-on blinds of the device registry of database-service. What a failing database-service
 //says goes to the log, never further; no body at all, or one that is not a list, is a failed call -
@@ -30,19 +31,32 @@ public class DeviceRegistryClient {
     }
 
     public Mono<List<SmartDevice>> getBlinds() {
+        return devices(DeviceKind.BLINDS, true);
+    }
+
+    //every opening sensor, switched on or off - the window sensors decide what a switched-off one is
+    public Mono<List<SmartDevice>> getOpeningSensors() {
+        return devices(DeviceKind.OPENING_SENSOR, null);
+    }
+
+    public Mono<List<SmartDevice>> getBthomeGateways() {
+        return devices(DeviceKind.BTHOME_GATEWAY, true);
+    }
+
+    private Mono<List<SmartDevice>> devices(final DeviceKind kind, final Boolean enabled) {
         return databaseWebClient
             .get()
             .uri(uriBuilder -> uriBuilder
                 .path("/home/device/registry")
-                .queryParam("kind", DeviceKind.BLINDS.getValue())
-                .queryParam("enabled", true)
+                .queryParam("kind", kind.getValue())
+                .queryParamIfPresent("enabled", Optional.ofNullable(enabled))
                 .build()
             )
             .retrieve()
             .onStatus(HttpStatusCode::isError, response -> DownstreamErrors.read(response)
                 .map(error -> {
-                    log.warn("database-service answered {} to the read of the blinds: {}",
-                        error.status().value(), error.errors());
+                    log.warn("database-service answered {} to the read of the devices of the kind {}: {}",
+                        error.status().value(), kind.getValue(), error.errors());
                     return new RegistryCallException("database-service answered " + error.status().value());
                 }))
             .bodyToMono(DEVICES)

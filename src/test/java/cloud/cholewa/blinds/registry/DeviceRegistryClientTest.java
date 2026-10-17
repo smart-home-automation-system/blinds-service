@@ -14,6 +14,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.test.StepVerifier;
 
 import java.io.IOException;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,6 +52,23 @@ class DeviceRegistryClientTest {
         assertThat(request.getUrl().encodedPath()).isEqualTo("/home/device/registry");
         assertThat(request.getUrl().queryParameter("kind")).isEqualTo("blinds");
         assertThat(request.getUrl().queryParameter("enabled")).isEqualTo("true");
+    }
+
+    //HAS-290: every opening sensor, switched on or off, and the switched-on BTHome gateways
+    @Test
+    void should_read_the_opening_sensors_and_the_bthome_gateways() throws InterruptedException {
+        server.enqueue(json("[]"));
+        server.enqueue(json("[]"));
+
+        client.getOpeningSensors().as(StepVerifier::create).expectNext(List.of()).verifyComplete();
+        client.getBthomeGateways().as(StepVerifier::create).expectNext(List.of()).verifyComplete();
+
+        final RecordedRequest sensors = server.takeRequest();
+        assertThat(sensors.getUrl().queryParameter("kind")).isEqualTo("opening sensor");
+        assertThat(sensors.getUrl().queryParameterNames()).doesNotContain("enabled");
+        final RecordedRequest gateways = server.takeRequest();
+        assertThat(gateways.getUrl().queryParameter("kind")).isEqualTo("bthome gateway");
+        assertThat(gateways.getUrl().queryParameter("enabled")).isEqualTo("true");
     }
 
     @Test

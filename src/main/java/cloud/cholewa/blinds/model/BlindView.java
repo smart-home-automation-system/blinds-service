@@ -7,7 +7,9 @@ import java.time.LocalDateTime;
 /**
  * A blind in the answer of a read: what the registry says of it and the state the devices
  * reported. A field the service does not know is left out - never answered as off, closed or
- * zero. {@code protection} comes with HAS-249.
+ * zero. {@code protection} comes with HAS-249.<br>
+ * {@code window} - the state of its window by its own sensors (HAS-290): {@code closed},
+ * {@code open}, {@code no sensor}, {@code unknown}.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record BlindView(
@@ -22,10 +24,11 @@ public record BlindView(
     String lastDirection,
     LocalDateTime movedAt,
     String source,
-    Boolean reachable
+    Boolean reachable,
+    String window
 ) {
 
-    public static BlindView of(final Blind blind, final BlindStatus status) {
+    public static BlindView of(final Blind blind, final BlindStatus status, final WindowState window) {
         return new BlindView(
             blind.id(),
             blind.name(),
@@ -38,7 +41,8 @@ public record BlindView(
             status.lastDirection() == null ? null : status.lastDirection().value(),
             status.movedAt(),
             status.source(),
-            status.reachable()
+            status.reachable(),
+            window == null ? null : window.value()
         );
     }
 }

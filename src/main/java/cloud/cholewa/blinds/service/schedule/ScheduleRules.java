@@ -52,17 +52,17 @@ public final class ScheduleRules {
         require(name.strip().equals(name), "name does not start or end with a space");
     }
 
-    //A window of two clock times runs forward within one day: it does not cross midnight, and it
-    //is not empty. Where an end is a time of the sun its order is known only on the day - the
-    //engine resolves it then and lets a window that ends before it starts pass without firing
+    //A window of two clock times is not empty; an end before the start is the next day (HAS-290 -
+    //a night such as 21:00 to 06:00). Where an end is a time of the sun the order is known only on
+    //the day, and the engine reads it the same way
     private static void checkWindow(final ScheduleWindow window) {
         require(window != null, "window is missing");
         checkEnd("window.from", window.from());
         checkEnd("window.to", window.to());
 
         if (window.from().kind() == WindowKind.CLOCK && window.to().kind() == WindowKind.CLOCK) {
-            require(window.to().time().isAfter(window.from().time()),
-                "window.to is after window.from when both are clock times");
+            require(!window.to().time().equals(window.from().time()),
+                "window.to differs from window.from when both are clock times - an earlier to is the next day");
         }
     }
 

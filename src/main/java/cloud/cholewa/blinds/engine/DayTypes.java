@@ -12,8 +12,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.EnumSet;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
 
 //The type of today, asked of the calendar once a day and kept. When the calendar cannot be read the
 //day is judged by the weekday alone - Saturday and Sunday off, a holiday or a day off of the
@@ -30,7 +31,8 @@ public class DayTypes {
     private final CalendarClient calendarClient;
     private final Clock clock;
 
-    private final AtomicReference<TodayType> cached = new AtomicReference<>();
+    //a few days around today: a window that opened yesterday is judged by the type of yesterday
+    private final Map<LocalDate, TodayType> cached = new ConcurrentHashMap<>();
 
     /**
      * The type of a day and where it comes from: {@code fromCalendar} false when it is the weekday
@@ -42,8 +44,8 @@ public class DayTypes {
     //never fails
     public Mono<TodayType> of(final LocalDate date) {
         return Mono.defer(() -> {
-            final TodayType current = cached.get();
-            if (current != null && current.date().equals(date)
+            final TodayType current = cached.get(date);
+            if (current != null
                 && (current.fromCalendar() || clock.instant().isBefore(current.askedAt().plus(RETRY_AFTER)))) {
                 return Mono.just(current);
             }
@@ -57,7 +59,10 @@ public class DayTypes {
                         date, e.toString(), weekday.type().getValue());
                     return Mono.just(weekday);
                 })
-                .doOnNext(cached::set);
+                .doOnNext(day -> {
+                    cached.keySet().removeIf(kept -> kept.isBefore(date.minusDays(2)) || kept.isAfter(date.plusDays(2)));
+                    cached.put(date, day);
+                });
         });
     }
 

@@ -1,12 +1,14 @@
 package cloud.cholewa.blinds.engine;
 
 import cloud.cholewa.blinds.engine.ScheduleEvaluator.ConditionStatus;
+import cloud.cholewa.blinds.engine.ScheduleEvaluator.Occurrence;
 import cloud.cholewa.blinds.engine.ScheduleEvaluator.ResolvedWindow;
 import cloud.cholewa.blinds.engine.ScheduleEvaluator.Truth;
 import cloud.cholewa.blinds.engine.ScheduleEvaluator.Verdict;
 import cloud.cholewa.blinds.engine.WeatherNow.Observation;
 import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindBinding;
+import cloud.cholewa.blinds.model.WindowState;
 import cloud.cholewa.blinds.model.schedule.ConditionMetric;
 import cloud.cholewa.blinds.model.schedule.ConditionOperator;
 import cloud.cholewa.blinds.model.schedule.ScheduleCondition;
@@ -97,13 +99,85 @@ class ScheduleEvaluatorTest {
                 WindowEnd.sun(WindowKind.SUNSET, 0, null, null), clock(23, 0)), polarNight)).isEmpty();
         }
 
-        //sunset + 0 after a clock 17:00 that the sun turned around: empty, the schedule passes the day
+        //HAS-290: an end before the start is the next day; an end at the start is no window
         @Test
-        void should_see_a_window_that_ends_before_it_starts_as_empty() {
-            final Optional<ResolvedWindow> window = ScheduleEvaluator.window(new ScheduleWindow(
+        void should_see_a_window_that_ends_before_it_starts_as_one_across_midnight() {
+            final Optional<ResolvedWindow> night = ScheduleEvaluator.window(new ScheduleWindow(
                 clock(17, 30), WindowEnd.sun(WindowKind.SUNSET, 0, null, null)), SUN);
+            final Optional<ResolvedWindow> none = ScheduleEvaluator.window(new ScheduleWindow(
+                clock(17, 17), WindowEnd.sun(WindowKind.SUNSET, 0, null, null)), SUN);
 
-            assertThat(window).hasValueSatisfying(resolved -> assertThat(resolved.isEmpty()).isTrue());
+            assertThat(night).hasValueSatisfying(resolved -> {
+                assertThat(resolved.isEmpty()).isFalse();
+                assertThat(resolved.crossesMidnight()).isTrue();
+            });
+            assertThat(none).hasValueSatisfying(resolved -> assertThat(resolved.isEmpty()).isTrue());
+        }
+    }
+
+    //HAS-290: a window of 21:00 to 06:00 belongs to the day it opened on
+    @Nested
+    class AcrossMidnight {
+
+        private final ScheduleWindow night = new ScheduleWindow(clock(21, 0), clock(6, 0));
+        private final SunDay nextSun = new SunDay(DAY.plusDays(1), LocalTime.of(7, 0), LocalTime.of(17, 15));
+
+        @Test
+        void should_end_a_night_window_on_the_next_day() {
+            assertThat(ScheduleEvaluator.occurrence(night, DAY, SUN, nextSun)).hasValueSatisfying(occurrence -> {
+                assertThat(occurrence.overnight()).isTrue();
+                assertThat(occurrence.start()).isEqualTo(DAY.atTime(21, 0));
+                assertThat(occurrence.end()).isEqualTo(DAY.plusDays(1).atTime(6, 0));
+                assertThat(occurrence.contains(DAY.atTime(23, 59))).isTrue();
+                assertThat(occurrence.contains(DAY.plusDays(1).atTime(0, 0))).isTrue();
+                assertThat(occurrence.contains(DAY.plusDays(1).atTime(5, 59, 59))).isTrue();
+                assertThat(occurrence.contains(DAY.plusDays(1).atTime(6, 0))).isFalse();
+                assertThat(occurrence.contains(DAY.atTime(20, 59))).isFalse();
+            });
+        }
+
+        //the sunset to the sunrise: the end is the sunrise of the next day, not of the first
+        @Test
+        void should_take_a_time_of_the_sun_after_midnight_from_the_next_day() {
+            final ScheduleWindow sunsetToSunrise = new ScheduleWindow(WindowEnd.sun(WindowKind.SUNSET, 0, null, null),
+                WindowEnd.sun(WindowKind.SUNRISE, 0, null, null));
+
+            assertThat(ScheduleEvaluator.occurrence(sunsetToSunrise, DAY, SUN, nextSun)).hasValueSatisfying(occurrence -> {
+                assertThat(occurrence.start()).isEqualTo(DAY.atTime(17, 17));
+                assertThat(occurrence.end()).isEqualTo(DAY.plusDays(1).atTime(7, 0));
+            });
+        }
+
+        @Test
+        void should_keep_a_window_within_one_day_as_it_was() {
+            assertThat(ScheduleEvaluator.occurrence(new ScheduleWindow(clock(16, 0), clock(18, 0)), DAY, SUN, nextSun))
+                .hasValue(new Occurrence(DAY, LocalTime.of(16, 0), LocalTime.of(18, 0), false));
+            assertThat(ScheduleEvaluator.occurrence(new ScheduleWindow(clock(16, 0), clock(16, 0)), DAY, SUN, nextSun))
+                .hasValueSatisfying(occurrence -> assertThat(occurrence.isEmpty()).isTrue());
+        }
+
+        //after midnight the night of yesterday is the one judged - on a day it runs on
+        @Test
+        void should_judge_the_night_that_opened_yesterday_until_it_ends() {
+            final Optional<Occurrence> yesterday = ScheduleEvaluator.occurrence(night, DAY.minusDays(1), SUN, SUN);
+            final Optional<Occurrence> today = ScheduleEvaluator.occurrence(night, DAY, SUN, nextSun);
+
+            assertThat(ScheduleEvaluator.current(yesterday, true, today, DAY.atTime(2, 0))).isEqualTo(yesterday);
+            assertThat(ScheduleEvaluator.current(yesterday, true, today, DAY.atTime(6, 0))).isEqualTo(today);
+            assertThat(ScheduleEvaluator.current(yesterday, false, today, DAY.atTime(2, 0))).isEqualTo(today);
+            assertThat(ScheduleEvaluator.current(Optional.empty(), true, today, DAY.atTime(2, 0))).isEqualTo(today);
+        }
+
+        @Test
+        void should_decide_by_the_night_and_not_by_the_clock_of_the_day() {
+            final Optional<Occurrence> occurrence = ScheduleEvaluator.occurrence(night, DAY, SUN, nextSun);
+
+            assertThat(ScheduleEvaluator.decide(true, true, occurrence, DAY.atTime(20, 0), 1, 1, 1)).isEqualTo(Verdict.BEFORE_WINDOW);
+            assertThat(ScheduleEvaluator.decide(true, true, occurrence, DAY.atTime(22, 0), 1, 1, 1)).isEqualTo(Verdict.FIRE);
+            assertThat(ScheduleEvaluator.decide(true, true, occurrence, DAY.plusDays(1).atTime(1, 0), 1, 1, 1)).isEqualTo(Verdict.FIRE);
+            assertThat(ScheduleEvaluator.decide(true, true, occurrence, DAY.plusDays(1).atTime(1, 0), 1, 0, 0)).isEqualTo(Verdict.FIRED);
+            assertThat(ScheduleEvaluator.decide(true, true, occurrence, DAY.plusDays(1).atTime(6, 0), 1, 1, 1))
+                .isEqualTo(Verdict.AFTER_WINDOW);
         }
     }
 
@@ -216,11 +290,39 @@ class ScheduleEvaluatorTest {
             assertThat(ScheduleEvaluator.truth(rain, weather(ConditionMetric.RAINING, 1, NOW), NOW)).isEqualTo(Truth.UNKNOWN);
         }
 
-        //no window sensor in the house yet
+        //without the blind it is about, the window is not known
         @Test
-        void should_never_know_the_window_of_the_room() {
+        void should_not_know_the_window_without_its_blind() {
             assertThat(ScheduleEvaluator.truth(ScheduleCondition.is(ConditionMetric.WINDOW_CLOSED, true, 0),
                 weather(ConditionMetric.ILLUMINANCE, 100, NOW), NOW)).isEqualTo(Truth.UNKNOWN);
+        }
+
+        //HAS-290, the window of one blind: no sensor counts as closed; every sensor closed - closed;
+        //one open - open; one silent - unknown (WindowSensorsTest judges the sensors into the state)
+        @ParameterizedTest
+        @CsvSource({
+            "NO_SENSOR, true, TRUE",
+            "CLOSED, true, TRUE",
+            "OPEN, true, FALSE",
+            "UNKNOWN, true, UNKNOWN",
+            "NO_SENSOR, false, FALSE",
+            "CLOSED, false, FALSE",
+            "OPEN, false, TRUE",
+            "UNKNOWN, false, UNKNOWN"
+        })
+        void should_judge_window_closed_by_the_window_of_the_blind(final WindowState window, final boolean value, final Truth truth) {
+            assertThat(ScheduleEvaluator.truth(ScheduleCondition.is(ConditionMetric.WINDOW_CLOSED, value, 0),
+                WeatherNow.unknown(), window, NOW)).isEqualTo(truth);
+        }
+
+        @Test
+        void should_judge_the_conditions_per_blind_only_where_window_closed_is_one_of_them() {
+            final ScheduleCondition lux = ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.LT,
+                BigDecimal.valueOf(200), 0);
+
+            assertThat(ScheduleEvaluator.perBlind(List.of(lux))).isFalse();
+            assertThat(ScheduleEvaluator.perBlind(List.of(lux, ScheduleCondition.is(ConditionMetric.WINDOW_CLOSED, true, 0))))
+                .isTrue();
         }
     }
 
@@ -280,46 +382,56 @@ class ScheduleEvaluatorTest {
     @Nested
     class Decision {
 
-        private final Optional<ResolvedWindow> window = Optional.of(new ResolvedWindow(LocalTime.of(16, 0), LocalTime.of(18, 0)));
-        private final List<ConditionStatus> met = List.of(ConditionStatus.MET, ConditionStatus.MET);
+        private final Optional<Occurrence> window = Optional.of(new Occurrence(DAY, LocalTime.of(16, 0), LocalTime.of(18, 0), false));
+
+        private LocalDateTime at(final int hour, final int minute) {
+            return DAY.atTime(hour, minute);
+        }
 
         @Test
-        void should_fire_inside_its_window_when_every_condition_is_met() {
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(17, 0), met, 2, 2)).isEqualTo(Verdict.FIRE);
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(17, 0), List.of(), 2, 1)).isEqualTo(Verdict.FIRE);
+        void should_fire_inside_its_window_when_a_pending_blind_is_ready() {
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(17, 0), 2, 2, 2)).isEqualTo(Verdict.FIRE);
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(17, 0), 2, 1, 1)).isEqualTo(Verdict.FIRE);
         }
 
         @Test
         void should_take_the_start_of_the_window_in_and_its_end_out() {
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(16, 0), met, 1, 1)).isEqualTo(Verdict.FIRE);
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(15, 59, 59), met, 1, 1))
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(16, 0), 1, 1, 1)).isEqualTo(Verdict.FIRE);
+            assertThat(ScheduleEvaluator.decide(true, true, window, DAY.atTime(15, 59, 59), 1, 1, 1))
                 .isEqualTo(Verdict.BEFORE_WINDOW);
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(18, 0), met, 1, 1)).isEqualTo(Verdict.AFTER_WINDOW);
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(18, 0), 1, 1, 1)).isEqualTo(Verdict.AFTER_WINDOW);
+        }
+
+        //no blind with every condition met: one condition not met, or every window open
+        @Test
+        void should_wait_while_no_pending_blind_is_ready() {
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(17, 0), 2, 2, 0)).isEqualTo(Verdict.WAITING);
         }
 
         @ParameterizedTest
-        @CsvSource({"HOLDING", "NOT_MET", "UNKNOWN"})
-        void should_wait_while_one_condition_is_not_met(final ConditionStatus other) {
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(17, 0), List.of(ConditionStatus.MET, other), 1, 1))
-                .isEqualTo(Verdict.WAITING);
+        @CsvSource({"HOLDING", "NOT_MET", "UNKNOWN", "PER_BLIND"})
+        void should_count_a_blind_ready_only_when_every_condition_is_met(final ConditionStatus other) {
+            assertThat(ScheduleEvaluator.ready(List.of(ConditionStatus.MET, ConditionStatus.MET))).isTrue();
+            assertThat(ScheduleEvaluator.ready(List.of())).isTrue();
+            assertThat(ScheduleEvaluator.ready(List.of(ConditionStatus.MET, other))).isFalse();
         }
 
         @Test
-        void should_fire_once_a_day_per_blind() {
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(17, 0), met, 2, 0)).isEqualTo(Verdict.FIRED);
+        void should_fire_once_a_window_per_blind() {
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(17, 0), 2, 0, 0)).isEqualTo(Verdict.FIRED);
         }
 
         @Test
         void should_say_why_it_does_not_fire_in_this_order() {
-            final LocalTime inside = LocalTime.of(17, 0);
+            final LocalDateTime inside = at(17, 0);
 
-            assertThat(ScheduleEvaluator.decide(false, false, Optional.empty(), inside, met, 0, 0)).isEqualTo(Verdict.DISABLED);
-            assertThat(ScheduleEvaluator.decide(true, false, Optional.empty(), inside, met, 0, 0)).isEqualTo(Verdict.NOT_TODAY);
-            assertThat(ScheduleEvaluator.decide(true, true, Optional.empty(), inside, met, 1, 1)).isEqualTo(Verdict.NO_WINDOW);
-            assertThat(ScheduleEvaluator.decide(true, true, Optional.of(new ResolvedWindow(LocalTime.of(18, 0), LocalTime.of(17, 0))),
-                inside, met, 1, 1)).isEqualTo(Verdict.NO_WINDOW);
-            assertThat(ScheduleEvaluator.decide(true, true, window, LocalTime.of(19, 0), met, 1, 0)).isEqualTo(Verdict.FIRED);
-            assertThat(ScheduleEvaluator.decide(true, true, window, inside, met, 0, 0)).isEqualTo(Verdict.NO_BLINDS);
+            assertThat(ScheduleEvaluator.decide(false, false, Optional.empty(), inside, 0, 0, 0)).isEqualTo(Verdict.DISABLED);
+            assertThat(ScheduleEvaluator.decide(true, false, Optional.empty(), inside, 0, 0, 0)).isEqualTo(Verdict.NOT_TODAY);
+            assertThat(ScheduleEvaluator.decide(true, true, Optional.empty(), inside, 1, 1, 1)).isEqualTo(Verdict.NO_WINDOW);
+            assertThat(ScheduleEvaluator.decide(true, true, Optional.of(new Occurrence(DAY, LocalTime.of(17, 0),
+                LocalTime.of(17, 0), false)), inside, 1, 1, 1)).isEqualTo(Verdict.NO_WINDOW);
+            assertThat(ScheduleEvaluator.decide(true, true, window, at(19, 0), 1, 0, 0)).isEqualTo(Verdict.FIRED);
+            assertThat(ScheduleEvaluator.decide(true, true, window, inside, 0, 0, 0)).isEqualTo(Verdict.NO_BLINDS);
         }
     }
 

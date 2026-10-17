@@ -11,7 +11,8 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 //The times of the sun at the house, worked out once a day - the first time the day is asked for -
 //and kept until the next. Only the rise and the set within the day itself count (oneDay): a sunset
@@ -24,16 +25,18 @@ public class SunCalendar {
     private final LocationProperties location;
     private final Clock clock;
 
-    private final AtomicReference<SunDay> cached = new AtomicReference<>();
+    //a few days around today: a night window takes its end from the sun of the next day
+    private final Map<LocalDate, SunDay> cached = new ConcurrentHashMap<>();
 
     public SunDay of(final LocalDate date) {
-        final SunDay current = cached.get();
-        if (current != null && current.date().equals(date)) {
+        final SunDay current = cached.get(date);
+        if (current != null) {
             return current;
         }
 
         final SunDay computed = compute(date);
-        cached.set(computed);
+        cached.keySet().removeIf(kept -> kept.isBefore(date.minusDays(2)) || kept.isAfter(date.plusDays(2)));
+        cached.put(date, computed);
         log.info("Sun on {} at the house: sunrise {}, sunset {}", date, computed.sunrise(), computed.sunset());
         return computed;
     }

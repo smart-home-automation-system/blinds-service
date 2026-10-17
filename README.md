@@ -34,7 +34,9 @@ driven through `amx-service`, and Shelly devices.
 Since HAS-244 the service **moves the blinds on command**, and since HAS-245 it **knows the
 real state of every blind**, whoever moved it — the Shelly app, a wall button, an AMX panel or
 the service itself. Since HAS-246 it **stores the schedules** the dashboard edits, and since
-HAS-247 **runs them every minute** from the calendar of the house, the sun and the weather.
+HAS-247 **runs them every minute** from the calendar of the house, the sun and the weather; since
+HAS-290 a schedule also reads **the window of each blind** from its own sensors, and a window may
+run past midnight.
 There are no overrides of a resident yet (HAS-248), and no wind and frost protection (HAS-249).
 
 Everything is non-blocking (Spring WebFlux / Reactor):
@@ -84,6 +86,19 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   `amx-service` — about 130 a minute. Only those of a blind of the registry are read, by the
   routing key first. The listener acknowledges by hand with a prefetch of 3; an event that
   cannot be read is logged at ERROR and acknowledged.
+- **Window sensors** (HAS-290): Shelly BLU Door/Window sensors, each a device of the kind
+  `opening sensor` with a `bthome` binding, linked to the blinds of their window by
+  `openingSensors` in the registry (`smart-home-sdk` 1.11.0). Their BTHome gateways (kind
+  `bthome gateway`) are read at the start and every five minutes with `Shelly.GetComponents`:
+  which `bthomesensor` component is the window (object `0x2D`) of which sensor, and the state each
+  holds; between two reads the gateway publishes `<gatewayId>.status.bthomesensor:<id>` on every
+  change, which arrives in the same queue. A sensor sends only when it changes, so **a state
+  stands while its gateway confirms it** - by that read or by a publish - within
+  `blinds.window.gateway-silent-after` (30 min, 10 min to 24 h; a bare number is minutes). The
+  window of a blind is `open` when one of its sensors is open, `unknown` when one never reported
+  or its gateway has been silent longer, `closed` when every one is closed, and `no sensor` -
+  counted as closed - when the registry links none. A switched-off sensor is left out of its
+  window. The Gen1 Door/Window 2 of the sauna entrance is not used (owner, 2026-10-17).
 - **Notifications** go to the `notification` exchange of the virtual host `/notification`
   over a second connection (`NotificationPublisher` of `cholewa-commons`), named
   `<pod>/notification`.
@@ -140,13 +155,15 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
 | `DELETE` | `/home/blinds/schedules/{id}` | Remove a schedule with its targets and conditions: `204` |
 
 - **A blind in a read** is `{"id", "name", "room", "vendor", "placement", "positioning",
-  "state", "position", "lastDirection", "movedAt", "source", "reachable"}`:
+  "state", "position", "lastDirection", "movedAt", "source", "reachable", "window"}`:
   - `state` is `open`, `closed`, `opening`, `closing` or `stopped`;
   - `position` is 0 (closed) to 100 (open), only from a blind that knows it;
   - `lastDirection` is `open` or `close`;
   - `movedAt` is when the state began, local time of the house;
   - `source` is who moved it (above);
-  - `reachable` is whether the device answers.
+  - `reachable` is whether the device answers;
+  - `window` is the state of its window (HAS-290): `closed`, `open`, `no sensor` or
+    `unknown` (above).
 
   **A field the service does not know is left out**, never answered as closed, zero or
   unreachable: nothing before the first report, no position from an Eaton blind, no
@@ -186,8 +203,8 @@ server first.
 
 # Schedules
 
-A schedule moves its targets **once a day**, when **every condition holds inside its window**, on
-the days of its type.
+A schedule moves its targets **once a window** - once a day, or once a night for a window that
+runs past midnight - when **every condition holds inside its window**, on the days of its type.
 
 | Field | Values |
 |---|---|
@@ -202,11 +219,12 @@ the days of its type.
 
 - **Conditions**: `illuminance` (lx, 0–200 000), `outside temperature` (°C, −50–60) and
   `wind gust` (m/s, 0–100) are compared `lt` or `gt` with a `threshold` of at most one decimal;
-  `raining` and `window closed` (the window of the room of the target) are compared `is` with a
-  `value`, `true` or `false`. `holdMinutes` is how long the condition has to hold without a break
+  `raining` and `window closed` (the window of each blind of the targets, by its own sensors -
+  never the room) are compared `is` with a `value`, `true` or `false`. `holdMinutes` is how long the condition has to hold without a break
   before it counts.
-- **The window**: two clock times run forward within one day — `to` after `from`, never across
-  midnight. Where an end is a time of the sun, the order is known only on the day.
+- **The window**: `to` before `from` is the next day (since HAS-290 - a night such as 21:00 to
+  06:00); `to` equal to `from` is refused for two clock times. Where an end is a time of the
+  sun, the order is known only on the day.
 - **Nothing in a body has a default**: a field left out is refused with `INVALID_SCHEDULE`, never
   read as off or zero. A field that does not belong (`position` with `close`, `offsetMinutes` on a
   clock time, a `threshold` for `raining`) is refused as well. The first broken rule is the answer.
@@ -257,36 +275,44 @@ closed:
 ## The engine
 
 Every minute (the first time a minute after the start) every schedule is judged, and one that
-fires moves the blinds of its targets it has not moved today, one after the other, with the
-`source` `schedule`.
+fires moves the blinds of its targets it has not moved in this window, one after the other, with
+the `source` `schedule`.
 
 - **The day type** comes from `GET /home/calendar/days` of `database-service`, once a day. While
   the calendar cannot be read the weekday decides — Saturday and Sunday off — with a WARN, and the
   calendar is asked again after ten minutes.
 - **The window** is resolved for the day: a clock time as it is; a sunrise or a sunset of the
   house, moved by its offset (but never past midnight) and then held between `earliest` and
-  `latest`. `from` is in the window, `to` is not. A window that ends before it starts passes the
-  day without firing.
+  `latest`. `from` is in the window, `to` is not. **A window that ends before it starts runs past
+  midnight** (HAS-290): its end is taken the next day (a sunrise: the next day's), and the night
+  belongs to the day it opened on - its day type, and its once a night (`firedOn` is that day).
+  While the night that opened yesterday lasts it is the one judged; a window whose ends are the
+  same time is no window.
 - **The weather** comes from `GET /home/weather/current` of `weather-service` every minute. A
   metric the answer leaves out, holds `stale`, or measured more than ten minutes ago is
   **unknown**; so is everything when `weather-service` cannot be read (one WARN, one INFO when
   it is back). The comparisons are strict: 200 is not `lt` 200.
-- **`window closed` is always unknown for now**: no window sensor exists in the house yet, so a
-  schedule with that condition does not fire.
+- **`window closed` is judged for each blind** (HAS-290) by the window of that blind (above), with
+  a hold of its own: an open window is no obstacle to closing, it selects another schedule. A
+  blind without a sensor counts as closed; a blind whose window is `unknown` is not moved by a
+  schedule that asks for it, while the others of the same schedule are. Say: one schedule closes
+  when the window is closed, another sends the blind to 30 when it is open - once that one has
+  fired, closing the window later in the evening lets the first one close the blind fully.
 - **What is not known never holds**: a schedule that needs an unknown input does not fire; the
   others do.
 - **A hold** counts from the first minute the condition was seen true, without a break. The holds
   live in memory: a restart, or a minute the engine could not judge, starts them again — a
   schedule then fires later, never earlier.
-- **Once a day per blind**: every blind a schedule sent a command to is recorded with what came
+- **Once a window per blind**: every blind a schedule sent a command to is recorded with what came
   of it — `moved`, `failed` (it did not take the command, or did not answer — it may have moved
   all the same) or `unsupported` (a position for a blind without one). A recorded blind is not
-  moved again that day, after a restart either. A blind the protection holds back is not recorded
+  moved again in that window, after a restart either. A blind the protection holds back is not recorded
   and is tried again the next minute. When the runs of the day cannot be read, nothing fires.
 - A blind named on its own and through its room is moved once; a target the registry does not
   know moves nothing.
 - Every decision is logged at INFO with its reason when it changes — `Schedule 3 (Evening close):
-  waiting for the conditions, window 17:17-23:00: illuminance lt 200 for 10 min holding`.
+  waiting for the conditions, window 17:17-23:00 of 2026-10-16: illuminance lt 200 for 10 min holding`;
+  with a window condition the windows of the blinds and how many are ready follow.
 
 `GET /home/blinds/schedules/{id}/today` answers what the engine makes of a schedule now, and
 changes nothing (it reads the weather of the last minute):
@@ -304,19 +330,26 @@ changes nothing (it reads the weather of the last minute):
      "current": 150, "measuredAt": "2026-10-16T17:20:05", "trueSince": "2026-10-16T17:18:00", "state": "holding"}
   ],
   "targets": [
-    {"deviceId": 53, "name": "Office door", "room": "office", "firedAt": "2026-10-16T17:28:00", "outcome": "moved"},
-    {"deviceId": 52, "name": "Office window", "room": "office"}
+    {"deviceId": 53, "name": "Office door", "room": "office", "window": "no sensor",
+     "firedAt": "2026-10-16T17:28:00", "outcome": "moved"},
+    {"deviceId": 52, "name": "Office window", "room": "office", "window": "open"}
   ],
   "decision": "waiting for the conditions"
 }
 ```
 
-- `dayTypeFromCalendar` is `false` when the weekday decided. `window` is left out when the day
-  has no such time of the sun.
-- `state` of a condition: `met`, `holding` (true, the hold not over), `not met`, `unknown`;
+- `date` is the day the window opened on - yesterday while a night window that opened then still
+  lasts; `dayType` and `runsToday` are of that day. `dayTypeFromCalendar` is `false` when the
+  weekday decided. `window` is left out when the day has no such time of the sun; its
+  `nextDay` is `true` when `to` is the next day, and left out otherwise.
+- `state` of a condition: `met`, `holding` (true, the hold not over), `not met`, `unknown`, and
+  `per blind` for `window closed`, whose state is that of each target;
   `current`, `measuredAt` and `trueSince` are left out when not known.
 - `targets`: the blinds of the targets, and a blind moved today that the registry no longer
-  knows (without `name` and `room`); `firedAt` and `outcome` once it was moved today.
+  knows (without `name` and `room`); `firedAt` and `outcome` once it was moved in this window;
+  `window` - the state of its window; `windowClosed` - its `window closed` conditions together
+  (`met` only when every one is, otherwise `unknown`, `not met` or `holding`), left out for a
+  schedule without one.
 - `decision`, the first that applies: `disabled`, `not today`, `no window today`, `fired today`,
   `before the window`, `after the window`, `no blind of its targets is known`,
   `waiting for the conditions`, `fires`.

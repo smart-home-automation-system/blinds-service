@@ -140,6 +140,10 @@ blinds:
   # status (HAS-291); 1 to 60 s
   eaton:
     confirm-after: PT5S
+  # how long the state of a window sensor stands without its gateway confirming it (HAS-290); the
+  # gateways are read every 5 min, so 10 min to 24 h
+  window:
+    gateway-silent-after: PT30M
 
 # what has no default in this document: a pod without one of them does not start (cholewa-commons,
 # checked before the first bean is created)
