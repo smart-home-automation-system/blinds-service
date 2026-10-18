@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -93,15 +94,17 @@ class BlindsQueryServiceTest {
         verify(poll, never()).readGen1(any());
     }
 
-    //HAS-255: where a stop left the roller is read from it at once, not a minute later
+    //HAS-255: where a stop left the roller is read from it a moment after the device has its answer
+    //(found in review: the roller waits for the answer to its own call), not a minute later
     @Test
-    void should_read_a_gen1_roller_at_once_when_it_reports_a_stop() {
+    void should_answer_a_stop_at_once_and_read_the_roller_after_it() {
         when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
         when(poll.readGen1(OFFICE_WINDOW)).thenReturn(Mono.empty());
 
         service.gen1Action(52, Gen1Action.STOP).as(StepVerifier::create).verifyComplete();
+        verify(poll, never()).readGen1(any());
 
-        verify(poll).readGen1(OFFICE_WINDOW);
+        verify(poll, timeout(3_000)).readGen1(OFFICE_WINDOW);
         verify(tracker, never()).observe(any(), any());
     }
 
@@ -113,7 +116,7 @@ class BlindsQueryServiceTest {
 
         service.gen1Action(52, Gen1Action.STOP).as(StepVerifier::create).verifyComplete();
 
-        verify(tracker).observe(OFFICE_WINDOW, new BlindReading(BlindState.STOPPED, null, null, null));
+        verify(tracker, timeout(3_000)).observe(OFFICE_WINDOW, new BlindReading(BlindState.STOPPED, null, null, null));
     }
 
     //a device configured with the id of a blind that is not a Gen1 roller

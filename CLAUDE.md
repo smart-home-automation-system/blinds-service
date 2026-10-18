@@ -87,9 +87,13 @@ review.
     actions on `GET /events/gen1?device=<registry id>` (routed by HAS-251, configured on the devices
     in HAS-255). **`open` / `close` come when the roller starts, `stop` when it stops** - seen on a
     Shelly 2.5 on v1.14.0 (HAS-255): the first version took them for the end reached and showed a
-    blind closed for the half minute it was still closing. A stop reads the roller's `/status` at
-    once (`BlindStatePoll.readGen1`) for its position; a roller that does not answer keeps the stop
-    (WARN), and is not made unreachable - it has just called.
+    blind closed for the half minute it was still closing. After a stop the device gets its `204`
+    at once and its `/status` is read a second later (`BlindsQueryService.readAfterStop`,
+    `BlindStatePoll.readGen1`, a detached chain with `.contextCapture()` and an error consumer):
+    the roller waits for the answer to its own call (found in review). A roller that does not answer
+    keeps the stop (WARN) and is not made unreachable - it has just called. **An uncalibrated roller
+    reads `stopped` after a move**: neither the action nor `/status` says whether it stopped at an
+    end (accepted in review - every registered roller is calibrated).
   - Eaton: the `status` event of `amx-service` (`0` stop, `1` open, `2` close), no position.
     The group point 26 is deliberately not read: it is unregistered, and the cinema actuator
     (12) reports on it too.

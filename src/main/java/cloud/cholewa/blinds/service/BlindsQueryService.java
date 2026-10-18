@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -32,6 +33,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class BlindsQueryService {
+
+    //long enough for the roller to have its answer, short enough to beat the poll by far
+    static final Duration READ_AFTER_STOP = Duration.ofSeconds(1);
 
     private final BlindRegistry blindRegistry;
     private final BlindStateTracker blindStateTracker;
@@ -73,18 +77,29 @@ public class BlindsQueryService {
             .switchIfEmpty(Mono.error(() -> BlindsException.notFound("no Gen1 blind with id " + device)))
             .flatMap(blind -> {
                 log.debug("Gen1 action {} of blind {} ({})", action, blind.id(), blind.name());
-                //a stop: where the roller stopped - an end or anywhere - is read from it at once,
-                //instead of a minute later by the poll; a device that does not answer leaves the
-                //stop the action told
                 if (action != Gen1Action.STOP) {
                     return observe(blind, action);
                 }
-                return blindStatePoll.readGen1(blind).onErrorResume(e -> {
-                    log.warn("Blind {} ({}) reported a stop and did not answer the status read: {}",
-                        blind.id(), blind.name(), e.toString());
-                    return observe(blind, action);
-                });
+                readAfterStop(blind);
+                return Mono.empty();
             });
+    }
+
+    //A stop: where the roller stopped - an end or anywhere - is read from it, instead of a minute
+    //later by the poll. Apart from the answer to the device and a moment after it (found in review):
+    //the roller waits for the answer to its own call, and a Gen1 device is asked for its status
+    //only once that call is over. A device that does not answer then leaves the stop it told
+    void readAfterStop(final Blind blind) {
+        Mono.delay(READ_AFTER_STOP)
+            .then(Mono.defer(() -> blindStatePoll.readGen1(blind)))
+            .onErrorResume(e -> {
+                log.warn("Blind {} ({}) reported a stop and did not answer the status read: {}",
+                    blind.id(), blind.name(), e.toString());
+                return observe(blind, Gen1Action.STOP);
+            })
+            .contextCapture()
+            .subscribe(null, e -> log.error("The read of blind {} ({}) after its stop ended with an error",
+                blind.id(), blind.name(), e));
     }
 
     //the state is known once it is in memory; a store that failed is this service's trouble, not
