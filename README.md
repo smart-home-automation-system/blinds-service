@@ -172,7 +172,9 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
   unreachable: nothing before the first report, no position from an Eaton blind, no
   `reachable` right after a restart.
 - **A Gen1 action** (`device` is the registry id of the blind, set in the `roller_*_url` of the
-  device): `open` and `close` mean the roller reached that end, `stop` that it stopped. The
+  device): `open` and `close` come when the roller **starts** that way (`opening` / `closing`),
+  `stop` when it stopped - at an end or anywhere; after a stop the device is answered at once and
+  its `/status` read a second later for where it is (a roller that does not answer stays `stopped`). The
   same action twice is the same state, so a repeated call is harmless. A device that is not a
   Gen1 blind of the registry gets a `404` (logged at WARN).
 - **A command answers `202`**: the device (or `amx-service`) took the command — never that the
