@@ -165,6 +165,16 @@ review.
     (`FAILED`) and is never repeated; a position for a blind without one is `UNSUPPORTED`; a blind
     the protection holds back is not a run and is tried again the next minute.
   - The holds live in memory (`HoldTracker`): a restart starts them again - later, never earlier.
+  - **The pause of a blind** (HAS-232, owner 2026-10-17 - it supersedes the room overrides of
+    HAS-248): `SchedulePauseService`, table `blinds_schedule_pause` (V4). It ends **after the next
+    run it prevents**, not at an hour (the owner chose that over a daily reset at 12:00): the
+    engine stores that run as `PAUSED` and deletes the row (`pausedRun`). Every schedule that
+    would move the blind in the same pass is held back too; one whose window opens later is not
+    (accepted in review). The pass reads the pauses strictly - none read, nothing fires; the reads
+    of the blinds use `pausedAsLastKnown` (the last read with a WARN), because they were served
+    from memory before and must not go blank for a database away (found in review).
+    `GET /{id}/schedules` (`BlindSchedules`) is `ScheduleEngine.today` of every schedule whose
+    targets take in the blind, cut down to it - the read of the room view of the dashboard.
   - A decision is logged at INFO when it changes, not every minute; a weather failure is one WARN
     and one INFO when it is back.
   - The sun is computed for `blinds.location.{latitude,longitude}` (`location-latitude` /

@@ -23,6 +23,7 @@ import cloud.cholewa.blinds.model.schedule.WindowEnd;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.service.BlindsCommandService;
 import cloud.cholewa.blinds.service.schedule.ScheduleFixtures;
+import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
 import cloud.cholewa.blinds.service.schedule.ScheduleService;
 import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.DayType;
@@ -42,12 +43,14 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -78,10 +81,12 @@ class ScheduleEngineTest {
     private final SunCalendar sunCalendar = mock(SunCalendar.class);
     private final WeatherClient weatherClient = mock(WeatherClient.class);
     private final WindowSensors windowSensors = mock(WindowSensors.class);
+    private final SchedulePauseService pauseService = mock(SchedulePauseService.class);
+    private final Map<Long, LocalDateTime> pauses = new HashMap<>();
     private final List<ScheduleRunEntity> stored = new ArrayList<>();
 
     private final ScheduleEngine sut = new ScheduleEngine(scheduleService, runRepository, blindRegistry, commandService,
-        dayTypes, sunCalendar, weatherClient, new HoldTracker(), windowSensors, new Clock() {
+        dayTypes, sunCalendar, weatherClient, new HoldTracker(), windowSensors, pauseService, new Clock() {
         @Override
         public ZoneId getZone() {
             return HOUSE;
@@ -112,6 +117,8 @@ class ScheduleEngineTest {
         when(windowSensors.stateOf(any(), any())).thenReturn(WindowState.NO_SENSOR);
         when(runRepository.findByScheduleIdAndFiredOnOrderById(anyLong(), any())).thenAnswer(call -> Flux.fromIterable(List.copyOf(stored))
             .filter(run -> run.scheduleId() == (long) call.getArgument(0) && run.firedOn().equals(call.getArgument(1))));
+        when(pauseService.paused()).thenAnswer(call -> Mono.just(Map.copyOf(pauses)));
+        when(pauseService.end(anyLong())).thenAnswer(call -> Mono.fromRunnable(() -> pauses.remove(call.<Long>getArgument(0))));
         when(runRepository.save(any())).thenAnswer(call -> {
             stored.add(call.getArgument(0));
             return Mono.just(call.getArgument(0));
@@ -138,6 +145,64 @@ class ScheduleEngineTest {
     }
 
     //a restart forgets the memory; the rows of the day keep the blind from moving twice
+    //HAS-232: a paused blind is not moved; the run is stored as paused, the window is used up and the
+    //pause ends - the next window moves it again
+    @Test
+    void should_hold_back_a_paused_blind_once_and_end_its_pause() {
+        schedules(closeTheKitchen(0));
+        pauses.put(17L, DAY.atTime(12, 0));
+
+        final Mono<Void> pass = sut.pass();
+        pass.as(StepVerifier::create).verifyComplete();
+        now.set(FIVE_PM.plusMinutes(1));
+        pass.as(StepVerifier::create).verifyComplete();
+
+        verify(commandService, never()).move(anyLong(), any(), any());
+        assertThat(stored).singleElement().satisfies(run -> {
+            assertThat(run.deviceId()).isEqualTo(17);
+            assertThat(run.firedOn()).isEqualTo(DAY);
+            assertThat(run.outcome()).isEqualTo(RunOutcome.PAUSED);
+        });
+        assertThat(pauses).isEmpty();
+
+        now.set(FIVE_PM.plusDays(1));
+        darkness(100, now.get());
+        pass.as(StepVerifier::create).verifyComplete();
+        verify(commandService, times(1)).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+    }
+
+    //only the paused blind: another blind of the same schedule is moved
+    @Test
+    void should_move_the_blinds_that_are_not_paused() {
+        schedules(withId(5, ScheduleFixtures.sunsetClose()
+            .from(WindowEnd.clock(LocalTime.of(16, 0)))
+            .to(WindowEnd.clock(LocalTime.of(18, 0)))
+            .targets(List.of(ScheduleTarget.room(RoomName.KITCHEN), ScheduleTarget.room(RoomName.OFFICE)))
+            .conditions(List.of(ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.LT,
+                BigDecimal.valueOf(200), 0)))
+            .build()));
+        pauses.put(52L, DAY.atTime(12, 0));
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        verify(commandService).move(17, BlindCommand.CLOSE, CommandSource.SCHEDULE);
+        verify(commandService, never()).move(eq(52L), any(), any());
+        assertThat(stored).extracting(ScheduleRunEntity::deviceId, ScheduleRunEntity::outcome)
+            .containsExactlyInAnyOrder(tuple(17L, RunOutcome.MOVED),
+                tuple(52L, RunOutcome.PAUSED));
+    }
+
+    //nothing fires without the pauses: a paused blind would be moved
+    @Test
+    void should_fire_nothing_when_the_pauses_cannot_be_read() {
+        schedules(closeTheKitchen(0));
+        when(pauseService.paused()).thenReturn(Mono.error(new IllegalStateException("no connection")));
+
+        sut.pass().as(StepVerifier::create).verifyComplete();
+
+        verify(commandService, never()).move(anyLong(), any(), any());
+    }
+
     @Test
     void should_not_fire_again_for_a_run_stored_before_a_restart() {
         schedules(closeTheKitchen(0));
@@ -297,8 +362,8 @@ class ScheduleEngineTest {
         sut.pass().as(StepVerifier::create).verifyComplete();
 
         assertThat(stored).extracting(ScheduleRunEntity::deviceId, ScheduleRunEntity::outcome).containsExactly(
-            org.assertj.core.groups.Tuple.tuple(17L, RunOutcome.FAILED),
-            org.assertj.core.groups.Tuple.tuple(52L, RunOutcome.MOVED));
+            tuple(17L, RunOutcome.FAILED),
+            tuple(52L, RunOutcome.MOVED));
     }
 
     //an unknown input stops the schedules that need it, and no others

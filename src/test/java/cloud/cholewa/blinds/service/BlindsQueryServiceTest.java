@@ -14,6 +14,7 @@ import cloud.cholewa.blinds.model.WindowState;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
+import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
 import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.BlindsPlacement;
 import cloud.cholewa.home.model.RoomName;
@@ -25,6 +26,7 @@ import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -42,16 +44,21 @@ class BlindsQueryServiceTest {
     private static final Blind KITCHEN = blind(17, RoomName.KITCHEN, new BlindBinding.Eaton(9));
     private static final Blind OFFICE_DOOR = blind(53, RoomName.OFFICE, new BlindBinding.ShellyGen2("10.0.0.50", 0, "a1"));
 
+    //HAS-232: the schedules of the office door are paused since then
+    private static final LocalDateTime PAUSED_AT = LocalDateTime.of(2026, 10, 17, 20, 15);
+
     private final BlindRegistry registry = mock(BlindRegistry.class);
     private final BlindStateTracker tracker = mock(BlindStateTracker.class);
     private final WindowSensors windowSensors = mock(WindowSensors.class);
-    private final BlindsQueryService service = new BlindsQueryService(registry, tracker, windowSensors);
+    private final SchedulePauseService pauseService = mock(SchedulePauseService.class);
+    private final BlindsQueryService service = new BlindsQueryService(registry, tracker, windowSensors, pauseService);
 
     @BeforeEach
     void setUp() {
         when(tracker.status(anyLong())).thenReturn(Mono.just(BlindStatus.unknown()));
         when(tracker.observe(any(), any())).thenReturn(Mono.empty());
         when(windowSensors.stateOf(any())).thenReturn(WindowState.NO_SENSOR);
+        when(pauseService.pausedAsLastKnown()).thenReturn(Mono.just(Map.of(53L, PAUSED_AT)));
     }
 
     //the rooms in the order of the SDK, the blinds of a room in the order of the registry
@@ -66,7 +73,8 @@ class BlindsQueryServiceTest {
                 assertThat(rooms).extracting(RoomBlinds::room).containsExactly("office", "kitchen");
                 assertThat(rooms.get(0).blinds()).extracting(BlindView::id).containsExactly(52L, 53L);
                 assertThat(rooms.get(0).blinds().get(1)).isEqualTo(new BlindView(53, "Blind 53", "office", "shelly",
-                    "external", true, "closed", 0, "close", MOVED, "SHC", true, "no sensor"));
+                    "external", true, "closed", 0, "close", MOVED, "SHC", true, "no sensor", PAUSED_AT));
+                assertThat(rooms.get(0).blinds().get(0).schedulePausedSince()).isNull();
             })
             .verifyComplete();
     }

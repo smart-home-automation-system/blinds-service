@@ -146,6 +146,9 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
 | `POST` | `/home/blinds/{id}?command=open\|close\|stop&source=` | Move one blind (`id` of the device registry) |
 | `POST` | `/home/blinds/{id}/position?value=0..100&source=` | Send a blind with `positioning` to a position, 0 closed, 100 open |
 | `POST` | `/home/blinds/rooms/{room}?command=open\|close\|stop&source=` | Move every blind of a room, one after the other |
+| `GET` | `/home/blinds/{id}/schedules` | The schedules that move one blind and what each makes of today: `scheduleId`, `name`, `enabled`, `action`, `position`, `window`, `decision`, and for this blind `firedAt` / `outcome` once it ran (HAS-232) |
+| `PUT` | `/home/blinds/{id}/schedule-pause` | Pause every schedule of one blind until the next run the pause prevents: `204`; a second pause keeps the first (HAS-232) |
+| `DELETE` | `/home/blinds/{id}/schedule-pause` | End the pause before that: `204`, also for a blind that is not paused |
 | `GET` | `/home/blinds/schedules` | Every schedule, in the order they were created |
 | `GET` | `/home/blinds/schedules/{id}` | One schedule |
 | `GET` | `/home/blinds/schedules/{id}/today` | What the engine makes of a schedule today (below) |
@@ -274,6 +277,14 @@ closed:
 
 ## The engine
 
+**The pause of a blind** (HAS-232): a resident pauses every schedule of one blind
+(`PUT /{id}/schedule-pause`). The engine does not move it; the run that would have moved it is
+stored with the outcome `paused` - its window is used up as by any run - and the pause ends with
+it, by itself. So a pause set in the evening keeps the blind as it is through the night window,
+and the next window moves it again. Every schedule that would move the blind in the same minute
+is held back too; a schedule whose window opens later is not. The reads of a blind answer
+`schedulePausedSince` while it is paused. Without the pauses (a database away) nothing fires.
+
 Every minute (the first time a minute after the start) every schedule is judged, and one that
 fires moves the blinds of its targets it has not moved in this window, one after the other, with
 the `source` `schedule`.
@@ -377,6 +388,9 @@ changes nothing (it reads the weather of the last minute):
   names of their constants. The targets and conditions keep the order they were given (their
   ids) and go with their schedule (`ON DELETE CASCADE`). The CHECKs repeat what one row can say
   of a schedule.
+- **`blinds_schedule_pause`** (`V4`, HAS-232): one row per paused blind - `device_id`,
+  `paused_at`; deleted by the engine with the run it held back, or by `DELETE`. `V4` also adds
+  `PAUSED` to the outcomes of the runs.
 - **`blinds_schedule_run`** (`V3`, HAS-247): a blind a schedule sent a command to — `schedule_id`,
   `device_id`, `fired_on` (the local date), `fired_at`, `outcome` (`MOVED`, `FAILED`,
   `UNSUPPORTED`). `UNIQUE (schedule_id, device_id, fired_on)`: once a day, whatever the engine

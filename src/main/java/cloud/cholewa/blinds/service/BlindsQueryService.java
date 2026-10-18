@@ -9,6 +9,7 @@ import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindReadings;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
+import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
 import cloud.cholewa.blinds.window.WindowSensors;
 import cloud.cholewa.home.model.RoomName;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,11 +35,12 @@ public class BlindsQueryService {
     private final BlindRegistry blindRegistry;
     private final BlindStateTracker blindStateTracker;
     private final WindowSensors windowSensors;
+    private final SchedulePauseService schedulePauseService;
 
     //every blind, by room in the order of the rooms of the SDK, each room's in the order of the registry
     public Mono<List<RoomBlinds>> all() {
-        return blindRegistry.all()
-            .flatMap(blinds -> Flux.fromIterable(blinds).concatMap(this::view).collectList())
+        return Mono.zip(blindRegistry.all(), schedulePauseService.pausedAsLastKnown())
+            .flatMap(read -> Flux.fromIterable(read.getT1()).concatMap(blind -> view(blind, read.getT2())).collectList())
             .map(views -> {
                 final Map<String, List<BlindView>> byRoom = views.stream()
                     .collect(Collectors.groupingBy(BlindView::room, LinkedHashMap::new, Collectors.toList()));
@@ -50,13 +53,14 @@ public class BlindsQueryService {
     }
 
     public Mono<RoomBlinds> inRoom(final RoomName room) {
-        return blindRegistry.inRoom(room)
-            .flatMap(blinds -> Flux.fromIterable(blinds).concatMap(this::view).collectList())
+        return Mono.zip(blindRegistry.inRoom(room), schedulePauseService.pausedAsLastKnown())
+            .flatMap(read -> Flux.fromIterable(read.getT1()).concatMap(blind -> view(blind, read.getT2())).collectList())
             .map(views -> new RoomBlinds(room.getValue(), views));
     }
 
     public Mono<BlindView> one(final long id) {
-        return blindRegistry.find(id).flatMap(this::view);
+        return Mono.zip(blindRegistry.find(id), schedulePauseService.pausedAsLastKnown())
+            .flatMap(read -> view(read.getT1(), read.getT2()));
     }
 
     //idempotent: the same action twice is the same state, confirmed. A device that is not a Gen1
@@ -77,7 +81,8 @@ public class BlindsQueryService {
             });
     }
 
-    private Mono<BlindView> view(final Blind blind) {
-        return blindStateTracker.status(blind.id()).map(status -> BlindView.of(blind, status, windowSensors.stateOf(blind)));
+    private Mono<BlindView> view(final Blind blind, final Map<Long, LocalDateTime> paused) {
+        return blindStateTracker.status(blind.id())
+            .map(status -> BlindView.of(blind, status, windowSensors.stateOf(blind), paused.get(blind.id())));
     }
 }

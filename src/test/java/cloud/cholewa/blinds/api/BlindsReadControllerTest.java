@@ -41,10 +41,11 @@ import static org.mockito.Mockito.when;
 class BlindsReadControllerTest {
 
     private static final BlindView DOOR = new BlindView(53, "Office door", "office", "shelly", "external", true,
-        "stopped", 40, "close", LocalDateTime.of(2026, 10, 15, 18, 0, 5), "SHC", true, "closed");
+        "stopped", 40, "close", LocalDateTime.of(2026, 10, 15, 18, 0, 5), "SHC", true, "closed",
+        LocalDateTime.of(2026, 10, 15, 21, 30));
     //nothing heard of it yet
     private static final BlindView KITCHEN = new BlindView(17, "Kitchen window", "kitchen", "eaton", "external", false,
-        null, null, null, null, null, null, null);
+        null, null, null, null, null, null, null, null);
 
     private final ListAppender<ILoggingEvent> processorLog = new ListAppender<>();
 
@@ -81,7 +82,9 @@ class BlindsReadControllerTest {
             .jsonPath("$[1].blinds[0].lastDirection").isEqualTo("close")
             .jsonPath("$[1].blinds[0].movedAt").isEqualTo("2026-10-15T18:00:05")
             .jsonPath("$[1].blinds[0].source").isEqualTo("SHC")
-            .jsonPath("$[1].blinds[0].reachable").isEqualTo(true);
+            .jsonPath("$[1].blinds[0].reachable").isEqualTo(true)
+            .jsonPath("$[1].blinds[0].schedulePausedSince").isEqualTo("2026-10-15T21:30:00")
+            .jsonPath("$[0].blinds[0].schedulePausedSince").doesNotExist();
     }
 
     //what is not known is left out - never answered as closed, zero or unreachable
