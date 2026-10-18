@@ -7,6 +7,7 @@ import cloud.cholewa.blinds.model.BlindView;
 import cloud.cholewa.blinds.model.RoomBlinds;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindReadings;
+import cloud.cholewa.blinds.state.BlindStatePoll;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
 import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
@@ -36,6 +37,7 @@ public class BlindsQueryService {
     private final BlindStateTracker blindStateTracker;
     private final WindowSensors windowSensors;
     private final SchedulePauseService schedulePauseService;
+    private final BlindStatePoll blindStatePoll;
 
     //every blind, by room in the order of the rooms of the SDK, each room's in the order of the registry
     public Mono<List<RoomBlinds>> all() {
@@ -71,13 +73,27 @@ public class BlindsQueryService {
             .switchIfEmpty(Mono.error(() -> BlindsException.notFound("no Gen1 blind with id " + device)))
             .flatMap(blind -> {
                 log.debug("Gen1 action {} of blind {} ({})", action, blind.id(), blind.name());
-                //the state is known once it is in memory; a store that failed is this service's
-                //trouble, not the device's, and a device does not call again
-                return blindStateTracker.observe(blind, BlindReadings.ofGen1Action(blind, action))
-                    .onErrorResume(e -> {
-                        log.error("The state of blind {} ({}) could not be stored", blind.id(), blind.name(), e);
-                        return Mono.empty();
-                    });
+                //a stop: where the roller stopped - an end or anywhere - is read from it at once,
+                //instead of a minute later by the poll; a device that does not answer leaves the
+                //stop the action told
+                if (action != Gen1Action.STOP) {
+                    return observe(blind, action);
+                }
+                return blindStatePoll.readGen1(blind).onErrorResume(e -> {
+                    log.warn("Blind {} ({}) reported a stop and did not answer the status read: {}",
+                        blind.id(), blind.name(), e.toString());
+                    return observe(blind, action);
+                });
+            });
+    }
+
+    //the state is known once it is in memory; a store that failed is this service's trouble, not
+    //the device's, and a device does not call again
+    private Mono<Void> observe(final Blind blind, final Gen1Action action) {
+        return blindStateTracker.observe(blind, BlindReadings.ofGen1Action(action))
+            .onErrorResume(e -> {
+                log.error("The state of blind {} ({}) could not be stored", blind.id(), blind.name(), e);
+                return Mono.empty();
             });
     }
 
