@@ -7,6 +7,7 @@ import cloud.cholewa.blinds.model.BlindView;
 import cloud.cholewa.blinds.model.RoomBlinds;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindReadings;
+import cloud.cholewa.blinds.state.BlindStatePoll;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
 import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -32,10 +34,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BlindsQueryService {
 
+    //long enough for the roller to have its answer, short enough to beat the poll by far
+    static final Duration READ_AFTER_STOP = Duration.ofSeconds(1);
+
     private final BlindRegistry blindRegistry;
     private final BlindStateTracker blindStateTracker;
     private final WindowSensors windowSensors;
     private final SchedulePauseService schedulePauseService;
+    private final BlindStatePoll blindStatePoll;
 
     //every blind, by room in the order of the rooms of the SDK, each room's in the order of the registry
     public Mono<List<RoomBlinds>> all() {
@@ -71,13 +77,38 @@ public class BlindsQueryService {
             .switchIfEmpty(Mono.error(() -> BlindsException.notFound("no Gen1 blind with id " + device)))
             .flatMap(blind -> {
                 log.debug("Gen1 action {} of blind {} ({})", action, blind.id(), blind.name());
-                //the state is known once it is in memory; a store that failed is this service's
-                //trouble, not the device's, and a device does not call again
-                return blindStateTracker.observe(blind, BlindReadings.ofGen1Action(blind, action))
-                    .onErrorResume(e -> {
-                        log.error("The state of blind {} ({}) could not be stored", blind.id(), blind.name(), e);
-                        return Mono.empty();
-                    });
+                if (action != Gen1Action.STOP) {
+                    return observe(blind, action);
+                }
+                readAfterStop(blind);
+                return Mono.empty();
+            });
+    }
+
+    //A stop: where the roller stopped - an end or anywhere - is read from it, instead of a minute
+    //later by the poll. Apart from the answer to the device and a moment after it (found in review):
+    //the roller waits for the answer to its own call, and a Gen1 device is asked for its status
+    //only once that call is over. A device that does not answer then leaves the stop it told
+    void readAfterStop(final Blind blind) {
+        Mono.delay(READ_AFTER_STOP)
+            .then(Mono.defer(() -> blindStatePoll.readGen1(blind)))
+            .onErrorResume(e -> {
+                log.warn("Blind {} ({}) reported a stop and did not answer the status read: {}",
+                    blind.id(), blind.name(), e.toString());
+                return observe(blind, Gen1Action.STOP);
+            })
+            .contextCapture()
+            .subscribe(null, e -> log.error("The read of blind {} ({}) after its stop ended with an error",
+                blind.id(), blind.name(), e));
+    }
+
+    //the state is known once it is in memory; a store that failed is this service's trouble, not
+    //the device's, and a device does not call again
+    private Mono<Void> observe(final Blind blind, final Gen1Action action) {
+        return blindStateTracker.observe(blind, BlindReadings.ofGen1Action(action))
+            .onErrorResume(e -> {
+                log.error("The state of blind {} ({}) could not be stored", blind.id(), blind.name(), e);
+                return Mono.empty();
             });
     }
 

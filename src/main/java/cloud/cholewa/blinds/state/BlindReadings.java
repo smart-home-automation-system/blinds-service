@@ -1,6 +1,5 @@
 package cloud.cholewa.blinds.state;
 
-import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindReading;
 import cloud.cholewa.blinds.model.BlindState;
 import cloud.cholewa.blinds.model.Direction;
@@ -53,13 +52,16 @@ public final class BlindReadings {
         return Optional.of(new BlindReading(state, position, direction(roller.getLastDirection()), roller.getSource()));
     }
 
-    //The roller_*_url actions of a Gen1 device: open and close when the roller reached that end,
-    //stop when it stopped anywhere. The end is a position of a blind that has one; a stop leaves it
-    //to the next poll
-    public static BlindReading ofGen1Action(final Blind blind, final Gen1Action action) {
+    //The roller_*_url actions of a Gen1 device (HAS-255, seen on a Shelly 2.5 on v1.14.0): open and
+    //close when the roller STARTS that way - not when it reached the end, as the first version read
+    //them, which showed a blind closed for the half minute it was still closing - and stop when it
+    //stopped, at an end or anywhere. A movement has no position yet; where a stop left the roller is
+    //read from the device at once (BlindsQueryService) - this reading is what is kept when it does
+    //not answer
+    public static BlindReading ofGen1Action(final Gen1Action action) {
         return switch (action) {
-            case OPEN -> new BlindReading(BlindState.OPEN, blind.positioning() ? 100 : null, Direction.OPEN, null);
-            case CLOSE -> new BlindReading(BlindState.CLOSED, blind.positioning() ? 0 : null, Direction.CLOSE, null);
+            case OPEN -> new BlindReading(BlindState.OPENING, null, Direction.OPEN, null);
+            case CLOSE -> new BlindReading(BlindState.CLOSING, null, Direction.CLOSE, null);
             case STOP -> new BlindReading(BlindState.STOPPED, null, null, null);
         };
     }

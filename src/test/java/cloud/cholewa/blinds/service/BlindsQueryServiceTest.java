@@ -12,6 +12,7 @@ import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.model.RoomBlinds;
 import cloud.cholewa.blinds.model.WindowState;
 import cloud.cholewa.blinds.registry.BlindRegistry;
+import cloud.cholewa.blinds.state.BlindStatePoll;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.blinds.state.Gen1Action;
 import cloud.cholewa.blinds.service.schedule.SchedulePauseService;
@@ -33,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,7 +53,9 @@ class BlindsQueryServiceTest {
     private final BlindStateTracker tracker = mock(BlindStateTracker.class);
     private final WindowSensors windowSensors = mock(WindowSensors.class);
     private final SchedulePauseService pauseService = mock(SchedulePauseService.class);
-    private final BlindsQueryService service = new BlindsQueryService(registry, tracker, windowSensors, pauseService);
+    private final BlindStatePoll poll = mock(BlindStatePoll.class);
+    private final BlindsQueryService service =
+        new BlindsQueryService(registry, tracker, windowSensors, pauseService, poll);
 
     @BeforeEach
     void setUp() {
@@ -79,13 +83,40 @@ class BlindsQueryServiceTest {
             .verifyComplete();
     }
 
+    //HAS-255: a close is the start of a movement, not the end
     @Test
-    void should_store_an_action_of_a_gen1_roller() {
+    void should_store_an_action_of_a_gen1_roller_as_the_start_of_a_movement() {
         when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
 
         service.gen1Action(52, Gen1Action.CLOSE).as(StepVerifier::create).verifyComplete();
 
-        verify(tracker).observe(OFFICE_WINDOW, new BlindReading(BlindState.CLOSED, 0, Direction.CLOSE, null));
+        verify(tracker).observe(OFFICE_WINDOW, new BlindReading(BlindState.CLOSING, null, Direction.CLOSE, null));
+        verify(poll, never()).readGen1(any());
+    }
+
+    //HAS-255: where a stop left the roller is read from it a moment after the device has its answer
+    //(found in review: the roller waits for the answer to its own call), not a minute later
+    @Test
+    void should_answer_a_stop_at_once_and_read_the_roller_after_it() {
+        when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
+        when(poll.readGen1(OFFICE_WINDOW)).thenReturn(Mono.empty());
+
+        service.gen1Action(52, Gen1Action.STOP).as(StepVerifier::create).verifyComplete();
+        verify(poll, never()).readGen1(any());
+
+        verify(poll, timeout(3_000)).readGen1(OFFICE_WINDOW);
+        verify(tracker, never()).observe(any(), any());
+    }
+
+    //a roller that reported a stop and then does not answer: the stop it told is kept
+    @Test
+    void should_keep_the_stop_when_the_roller_does_not_answer_the_read_after_it() {
+        when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
+        when(poll.readGen1(OFFICE_WINDOW)).thenReturn(Mono.error(new IllegalStateException("timeout")));
+
+        service.gen1Action(52, Gen1Action.STOP).as(StepVerifier::create).verifyComplete();
+
+        verify(tracker, timeout(3_000)).observe(OFFICE_WINDOW, new BlindReading(BlindState.STOPPED, null, null, null));
     }
 
     //a device configured with the id of a blind that is not a Gen1 roller
@@ -106,7 +137,7 @@ class BlindsQueryServiceTest {
         when(registry.find(52)).thenReturn(Mono.just(OFFICE_WINDOW));
         when(tracker.observe(any(), any())).thenReturn(Mono.error(new IllegalStateException("no connection")));
 
-        service.gen1Action(52, Gen1Action.STOP).as(StepVerifier::create).verifyComplete();
+        service.gen1Action(52, Gen1Action.OPEN).as(StepVerifier::create).verifyComplete();
     }
 
     private static Blind blind(final long id, final RoomName room, final BlindBinding binding) {

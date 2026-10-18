@@ -73,8 +73,8 @@ public class BlindStatePoll {
     }
 
     //the reading is applied apart from the read: a failed write of the state is not a device that
-    //did not answer
-    Mono<Void> readGen1(final Blind blind) {
+    //did not answer. Also the read right after a Gen1 roller reported a stop (BlindsQueryService)
+    public Mono<Void> readGen1(final Blind blind) {
         final BlindBinding.ShellyGen1 roller = (BlindBinding.ShellyGen1) blind.binding();
 
         return shellyGen1Client.status(roller.address())

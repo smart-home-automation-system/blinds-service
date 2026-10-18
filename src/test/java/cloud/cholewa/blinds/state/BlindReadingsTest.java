@@ -1,13 +1,8 @@
 package cloud.cholewa.blinds.state;
 
-import cloud.cholewa.blinds.model.Blind;
-import cloud.cholewa.blinds.model.BlindBinding;
 import cloud.cholewa.blinds.model.BlindReading;
 import cloud.cholewa.blinds.model.BlindState;
 import cloud.cholewa.blinds.model.Direction;
-import cloud.cholewa.home.model.BlindsPlacement;
-import cloud.cholewa.home.model.RoomName;
-import cloud.cholewa.home.model.SmartVendor;
 import cloud.cholewa.shelly.model.CoverStatus;
 import cloud.cholewa.shelly.model.RollerStatus;
 import org.junit.jupiter.api.Test;
@@ -77,15 +72,15 @@ class BlindReadingsTest {
         assertThat(BlindReadings.ofRoller(roller("stop", false, 37))).get().extracting(BlindReading::position).isNull();
     }
 
+    //HAS-255, seen on a Shelly 2.5: open and close come when the roller starts, stop when it stops -
+    //a movement has no position yet, and the end is read from the device after a stop
     @Test
-    void should_take_an_action_as_the_end_the_roller_reached() {
-        assertThat(BlindReadings.ofGen1Action(gen1(true), Gen1Action.OPEN))
-            .isEqualTo(new BlindReading(BlindState.OPEN, 100, Direction.OPEN, null));
-        assertThat(BlindReadings.ofGen1Action(gen1(true), Gen1Action.CLOSE))
-            .isEqualTo(new BlindReading(BlindState.CLOSED, 0, Direction.CLOSE, null));
-        assertThat(BlindReadings.ofGen1Action(gen1(false), Gen1Action.OPEN))
-            .isEqualTo(new BlindReading(BlindState.OPEN, null, Direction.OPEN, null));
-        assertThat(BlindReadings.ofGen1Action(gen1(true), Gen1Action.STOP))
+    void should_take_an_action_as_the_start_or_the_stop_of_a_movement() {
+        assertThat(BlindReadings.ofGen1Action(Gen1Action.OPEN))
+            .isEqualTo(new BlindReading(BlindState.OPENING, null, Direction.OPEN, null));
+        assertThat(BlindReadings.ofGen1Action(Gen1Action.CLOSE))
+            .isEqualTo(new BlindReading(BlindState.CLOSING, null, Direction.CLOSE, null));
+        assertThat(BlindReadings.ofGen1Action(Gen1Action.STOP))
             .isEqualTo(new BlindReading(BlindState.STOPPED, null, null, null));
     }
 
@@ -115,8 +110,4 @@ class BlindReadingsTest {
         return roller;
     }
 
-    private static Blind gen1(final boolean positioning) {
-        return new Blind(52, "Office window", RoomName.OFFICE, SmartVendor.SHELLY,
-            new BlindBinding.ShellyGen1("10.0.0.59", 0), BlindsPlacement.EXTERNAL, positioning);
-    }
 }

@@ -130,6 +130,21 @@ class BlindStateTrackerTest {
         assertThat(decision.status().state()).isEqualTo(BlindState.OPEN);
     }
 
+    //HAS-255: a Gen1 roller opened from the dashboard - the action said opening, the read after its
+    //stop says open at 100: the end, with the source of the movement
+    @Test
+    void should_take_the_read_after_a_gen1_stop_as_the_end_of_the_movement() {
+        final BlindStatus opening = new BlindStatus(BlindState.OPENING, null, Direction.OPEN, NOW.minusSeconds(30), "dashboard", true);
+
+        final BlindStateTracker.Decision decision = BlindStateTracker.decide(opening,
+            new BlindReading(BlindState.OPEN, 100, Direction.OPEN, "http"), NOW, null);
+
+        assertThat(decision.changed()).isTrue();
+        assertThat(decision.status().state()).isEqualTo(BlindState.OPEN);
+        assertThat(decision.status().position()).isEqualTo(100);
+        assertThat(decision.status().source()).isEqualTo("dashboard");
+    }
+
     //the roller_stop_url action: stopped anywhere, the direction is not in it
     @Test
     void should_take_a_stop_action_after_an_end_as_a_stop() {
