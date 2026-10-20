@@ -223,7 +223,11 @@ runs past midnight - when **every condition holds inside its window**, on the da
 | `id`, `createdAt`, `updatedAt` | the service's, in a read only; a body that sends them does not set them |
 
 - **Conditions**: `illuminance` (lx, 0–200 000), `outside temperature` (°C, −50–60) and
-  `wind gust` (m/s, 0–100) are compared `lt` or `gt` with a `threshold` of at most one decimal;
+  `wind gust` (m/s, 0–100) are compared `lt` or `gt` with a `threshold` of at most one decimal.
+  The comparison is strict, so a threshold that can never be crossed is refused (HAS-294): `lt` at
+  the least of the range (`illuminance lt 0` - the darkest dusk that can be met is `lt 1`) and
+  `gt` at the most (`wind gust gt 100`), with the reason in words
+  (`illuminance lt 0 is never true - the station reports 0 lx at the least`);
   `raining` and `window closed` (the window of each blind of the targets, by its own sensors -
   never the room) are compared `is` with a `value`, `true` or `false`. `holdMinutes` is how long the condition has to hold without a break
   before it counts.

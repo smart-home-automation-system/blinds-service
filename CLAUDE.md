@@ -23,7 +23,7 @@ review.
   (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
 - Uses libraries: `cholewa-commons` 1.9.0 (pool, error contract, connection names,
-  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.11.0 (`SmartDevice` of
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.12.0 (`SmartDevice` of
   the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.1.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
 - Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
@@ -137,7 +137,10 @@ review.
   needs a text in the dashboard.
 - **The schedules (HAS-246)**: `ScheduleRules` holds every rule of a body and answers
   `INVALID_SCHEDULE` (400) with the reason, pinned rule by rule by `ScheduleRulesTest`; no
-  `@Valid`, nothing in a body has a default. `ScheduleService` writes the three tables in **one
+  `@Valid`, nothing in a body has a default. **A threshold must be crossable** (HAS-294): the engine
+  compares strictly, so `lt` at the least of a range and `gt` at the most are refused
+  (`checkReachable`) - `illuminance lt 0` kept a door open all night. A range moved in `rangeOf`
+  moves those edges too; the dashboard copies both. `ScheduleService` writes the three tables in **one
   transaction** (`TransactionalOperator`, auto-configured on the pooled `ConnectionFactory`) -
   `should_leave_a_schedule_as_it_was_when_a_replace_fails` fails without it. Reads go one after
   the other (pool of 2). The models live here, not in the SDK (one consumer); the dashboard
