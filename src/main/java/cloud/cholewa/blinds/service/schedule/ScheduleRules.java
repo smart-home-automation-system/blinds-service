@@ -138,6 +138,23 @@ public final class ScheduleRules {
         require(condition.threshold().compareTo(range.min()) >= 0 && condition.threshold().compareTo(range.max()) <= 0,
             "the threshold of " + name + " is between " + range.min().toPlainString() + " and "
                 + range.max().toPlainString() + " " + range.unit());
+        checkReachable(name, condition.operator(), condition.threshold(), range);
+    }
+
+    //HAS-294: the engine compares strictly, and the station never reports below the least or above
+    //the most of a range - lt at the least (illuminance lt 0) or gt at the most is never true, and a
+    //schedule with it never runs (a door left open all night, 2026-10-18). The edge itself is refused
+    private static void checkReachable(final String name, final ConditionOperator operator,
+        final BigDecimal threshold, final Range range) {
+        if (operator == ConditionOperator.LT) {
+            require(threshold.compareTo(range.min()) > 0, name + " lt " + plain(threshold)
+                + " is never true - the station reports " + range.min().toPlainString() + " " + range.unit()
+                + " at the least");
+        } else {
+            require(threshold.compareTo(range.max()) < 0, name + " gt " + plain(threshold)
+                + " is never true - the station reports " + range.max().toPlainString() + " " + range.unit()
+                + " at the most");
+        }
     }
 
     //Every metric named: a metric added has to be decided here, or the compiler stops. A truth has
@@ -149,6 +166,11 @@ public final class ScheduleRules {
             case WIND_GUST -> new Range(BigDecimal.ZERO, BigDecimal.valueOf(100), "m/s");
             case RAINING, WINDOW_CLOSED -> null;
         };
+    }
+
+    //0.0 reads 0, as it was most likely typed
+    private static String plain(final BigDecimal threshold) {
+        return threshold.stripTrailingZeros().toPlainString();
     }
 
     private static void checkAction(final ScheduleAction action, final Integer position) {

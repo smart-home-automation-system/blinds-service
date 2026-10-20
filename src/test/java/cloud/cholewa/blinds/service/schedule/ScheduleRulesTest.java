@@ -67,13 +67,24 @@ class ScheduleRulesTest {
             arguments(named("a hold of 120 minutes", sunsetClose().conditions(List.of(
                 ScheduleCondition.compared(ConditionMetric.WIND_GUST, ConditionOperator.GT, BigDecimal.TEN, 120)))
                 .build())),
+            //lt at the most and gt at the least can be met: the edge that cannot is refused (HAS-294)
             arguments(named("a threshold at the bounds", sunsetClose().conditions(List.of(
-                ScheduleCondition.compared(ConditionMetric.OUTSIDE_TEMPERATURE, ConditionOperator.LT,
+                ScheduleCondition.compared(ConditionMetric.OUTSIDE_TEMPERATURE, ConditionOperator.GT,
                     BigDecimal.valueOf(-50), 0),
                 ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.LT,
                     BigDecimal.valueOf(200_000), 0),
                 ScheduleCondition.compared(ConditionMetric.WIND_GUST, ConditionOperator.LT,
-                    new BigDecimal("100.0"), 0)))
+                    new BigDecimal("100.0"), 0),
+                ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.GT,
+                    BigDecimal.ZERO, 0)))
+                .build())),
+            arguments(named("the darkest dusk that can be met, illuminance lt 1", sunsetClose().conditions(List.of(
+                ScheduleCondition.compared(ConditionMetric.ILLUMINANCE, ConditionOperator.LT, BigDecimal.ONE, 0)))
+                .build())),
+            arguments(named("a threshold just inside the edge", sunsetClose().conditions(List.of(
+                ScheduleCondition.compared(ConditionMetric.WIND_GUST, ConditionOperator.LT, new BigDecimal("0.1"), 0),
+                ScheduleCondition.compared(ConditionMetric.OUTSIDE_TEMPERATURE, ConditionOperator.GT,
+                    new BigDecimal("59.9"), 0)))
                 .build())),
             arguments(named("not raining", sunsetClose().conditions(List.of(
                 ScheduleCondition.is(ConditionMetric.RAINING, false, 5))).build())),
@@ -194,6 +205,21 @@ class ScheduleRulesTest {
                 "the threshold of wind gust is between 0 and 100 m/s"),
             refused("a gust above the range", compared(ConditionMetric.WIND_GUST, "101"),
                 "the threshold of wind gust is between 0 and 100 m/s"),
+            //HAS-294: the engine compares strictly - the edge of a range is never crossed
+            refused("illuminance lt 0", comparedLt(ConditionMetric.ILLUMINANCE, "0"),
+                "illuminance lt 0 is never true - the station reports 0 lx at the least"),
+            refused("illuminance lt 0.0", comparedLt(ConditionMetric.ILLUMINANCE, "0.0"),
+                "illuminance lt 0 is never true - the station reports 0 lx at the least"),
+            refused("wind gust lt 0", comparedLt(ConditionMetric.WIND_GUST, "0"),
+                "wind gust lt 0 is never true - the station reports 0 m/s at the least"),
+            refused("outside temperature lt -50", comparedLt(ConditionMetric.OUTSIDE_TEMPERATURE, "-50"),
+                "outside temperature lt -50 is never true - the station reports -50 °C at the least"),
+            refused("illuminance gt 200000", compared(ConditionMetric.ILLUMINANCE, "200000"),
+                "illuminance gt 200000 is never true - the station reports 200000 lx at the most"),
+            refused("outside temperature gt 60.0", compared(ConditionMetric.OUTSIDE_TEMPERATURE, "60.0"),
+                "outside temperature gt 60 is never true - the station reports 60 °C at the most"),
+            refused("wind gust gt 100", compared(ConditionMetric.WIND_GUST, "100"),
+                "wind gust gt 100 is never true - the station reports 100 m/s at the most"),
             refused("a truth with lt", condition(new ScheduleCondition(
                     ConditionMetric.RAINING, ConditionOperator.LT, BigDecimal.ONE, null, 0)),
                 "raining is compared with is, not with lt or gt"),
@@ -234,5 +260,9 @@ class ScheduleRulesTest {
 
     private static ScheduleFixtures.Builder compared(final ConditionMetric metric, final String threshold) {
         return condition(ScheduleCondition.compared(metric, ConditionOperator.GT, new BigDecimal(threshold), 0));
+    }
+
+    private static ScheduleFixtures.Builder comparedLt(final ConditionMetric metric, final String threshold) {
+        return condition(ScheduleCondition.compared(metric, ConditionOperator.LT, new BigDecimal(threshold), 0));
     }
 }
