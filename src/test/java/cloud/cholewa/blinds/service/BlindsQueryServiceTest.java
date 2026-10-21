@@ -71,13 +71,14 @@ class BlindsQueryServiceTest {
         when(registry.all()).thenReturn(Mono.just(List.of(OFFICE_WINDOW, KITCHEN, OFFICE_DOOR)));
         when(tracker.status(53)).thenReturn(Mono.just(
             new BlindStatus(BlindState.CLOSED, 0, Direction.CLOSE, MOVED, "SHC", true)));
+        when(tracker.lastCommandConfirmed(53)).thenReturn(false);
 
         service.all().as(StepVerifier::create)
             .assertNext(rooms -> {
                 assertThat(rooms).extracting(RoomBlinds::room).containsExactly("office", "kitchen");
                 assertThat(rooms.get(0).blinds()).extracting(BlindView::id).containsExactly(52L, 53L);
                 assertThat(rooms.get(0).blinds().get(1)).isEqualTo(new BlindView(53, "Blind 53", "office", "shelly",
-                    "external", true, "closed", 0, "close", MOVED, "SHC", true, "no sensor", PAUSED_AT));
+                    "external", true, "closed", 0, "close", MOVED, "SHC", true, false, "no sensor", PAUSED_AT));
                 assertThat(rooms.get(0).blinds().get(0).schedulePausedSince()).isNull();
             })
             .verifyComplete();

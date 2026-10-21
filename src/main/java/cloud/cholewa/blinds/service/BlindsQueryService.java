@@ -114,6 +114,7 @@ public class BlindsQueryService {
 
     private Mono<BlindView> view(final Blind blind, final Map<Long, LocalDateTime> paused) {
         return blindStateTracker.status(blind.id())
-            .map(status -> BlindView.of(blind, status, windowSensors.stateOf(blind), paused.get(blind.id())));
+            .map(status -> BlindView.of(blind, status, blindStateTracker.lastCommandConfirmed(blind.id()),
+                windowSensors.stateOf(blind), paused.get(blind.id())));
     }
 }

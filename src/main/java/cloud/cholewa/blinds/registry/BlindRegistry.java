@@ -57,6 +57,11 @@ public class BlindRegistry {
         return list == null ? List.of() : list;
     }
 
+    /** Whether the registry was read once: before that every blind would look removed. */
+    public boolean loaded() {
+        return blinds.get() != null;
+    }
+
     public Mono<List<Blind>> all() {
         return known();
     }

@@ -11,7 +11,10 @@ import java.time.LocalDateTime;
  * {@code window} - the state of its window by its own sensors (HAS-290): {@code closed},
  * {@code open}, {@code no sensor}, {@code unknown}.<br>
  * {@code schedulePausedSince} - its schedules are paused since then, until the next run the pause
- * prevents (HAS-232); left out while they are not.
+ * prevents (HAS-232); left out while they are not.<br>
+ * {@code lastCommandConfirmed} - whether the device answered the last command of this service
+ * (HAS-250): {@code false} from the end of its window until a command is confirmed or the blind is
+ * reported to move; left out while no command was judged since the start of the service.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record BlindView(
@@ -27,6 +30,7 @@ public record BlindView(
     LocalDateTime movedAt,
     String source,
     Boolean reachable,
+    Boolean lastCommandConfirmed,
     String window,
     LocalDateTime schedulePausedSince
 ) {
@@ -34,6 +38,7 @@ public record BlindView(
     public static BlindView of(
         final Blind blind,
         final BlindStatus status,
+        final Boolean lastCommandConfirmed,
         final WindowState window,
         final LocalDateTime schedulePausedSince
     ) {
@@ -50,6 +55,7 @@ public record BlindView(
             status.movedAt(),
             status.source(),
             status.reachable(),
+            lastCommandConfirmed,
             window == null ? null : window.value(),
             schedulePausedSince
         );

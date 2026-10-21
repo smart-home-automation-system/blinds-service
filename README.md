@@ -73,8 +73,20 @@ Everything is non-blocking (Spring WebFlux / Reactor):
     `blinds.eaton.confirm-after` (5 s), the actuator is asked for its status once
     (`POST /home/amx/eaton/blinds/{point}/status` of `amx-service`) and its answer is the
     movement. A stop that arrives within two minutes of such a command, with no movement
-    reported in between, is the end of a movement in the commanded direction. When nothing at
-    all arrives the command is unconfirmed: a WARN in the log, the state left as it was.
+    reported in between, is the end of a movement in the commanded direction.
+- **Every command waits for its answer** (HAS-250): a report of the device that shows the blind
+  moving the commanded way or at its end (at rest for a stop, moving or at the position for a
+  position) - within 60 s for a Gen2+ cover, two minutes for a Gen1 roller and an Eaton actuator.
+  A blind already where the command asks waits for nothing (an Eaton open or close always waits).
+  When nothing answers, the command is unconfirmed: a WARN, `lastCommandConfirmed: false` in the
+  reads until a command is confirmed or the blind is reported to move, the state left as it was.
+  **The third unconfirmed command in a row is an alert**, once, and not for a blind that does not
+  answer at all - the availability monitor tells of that one.
+- **Availability monitor** (HAS-250): every minute, the Shelly blinds. One unreachable for
+  `blinds.monitor.offline-after` (5 min) - a Gen1 roller whose poll fails, a Gen2+ cover that
+  left the broker - is an alert, reminded every `blinds.monitor.reminder-every` (1 h), with an
+  info when it answers again; one message names every blind out. The open alerts are kept in
+  the database, so a restart neither repeats nor forgets one. The Eaton blinds are not watched.
 - **Who moved it** (`source`): a movement seen within two minutes of a command of this service
   takes the command's `source`; the rest that ends a movement keeps the source of that
   movement; otherwise it is the word of the Shelly device (`SHC` for the app, `button`,
@@ -101,7 +113,7 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   window. The Gen1 Door/Window 2 of the sauna entrance is not used (owner, 2026-10-17).
 - **Notifications** go to the `notification` exchange of the virtual host `/notification`
   over a second connection (`NotificationPublisher` of `cholewa-commons`), named
-  `<pod>/notification`.
+  `<pod>/notification`: the alerts of the availability monitor and of the unconfirmed commands.
 - **Clients** of `database-service` (the device registry), `weather-service` and
   `amx-service`, each a `WebClient` over k8s DNS with its own connect and response timeouts
   (`internal.service.*`).
@@ -126,6 +138,9 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   `weather-service` 6010, `amx-service` 6001.
 - `blinds.eaton.confirm-after` (default `PT5S`, 1 to 60 s, a bare number is seconds): how long
   the start of an Eaton movement is waited for before the actuator is asked for its status.
+- `blinds.monitor.offline-after` (default `PT5M`, 2 min to 2 h) and `blinds.monitor.reminder-every`
+  (default `PT1H`, 15 min to 24 h), a bare number is minutes: when an unreachable Shelly blind is
+  announced, and how often while it lasts.
 - The database connection properties (`database-host`, `database-port`, `database-name`,
   `database-user`, `database-password`) are bound to the `database.*` prefix that
   `cholewa-commons` consumes; Flyway derives its JDBC URL from them (`--flyway-url=...`
@@ -158,19 +173,23 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
 | `DELETE` | `/home/blinds/schedules/{id}` | Remove a schedule with its targets and conditions: `204` |
 
 - **A blind in a read** is `{"id", "name", "room", "vendor", "placement", "positioning",
-  "state", "position", "lastDirection", "movedAt", "source", "reachable", "window"}`:
+  "state", "position", "lastDirection", "movedAt", "source", "reachable", "lastCommandConfirmed",
+  "window", "schedulePausedSince"}`:
   - `state` is `open`, `closed`, `opening`, `closing` or `stopped`;
   - `position` is 0 (closed) to 100 (open), only from a blind that knows it;
   - `lastDirection` is `open` or `close`;
   - `movedAt` is when the state began, local time of the house;
   - `source` is who moved it (above);
   - `reachable` is whether the device answers;
+  - `lastCommandConfirmed` is whether the device answered the last command of this service
+    (HAS-250, above);
   - `window` is the state of its window (HAS-290): `closed`, `open`, `no sensor` or
-    `unknown` (above).
+    `unknown` (above);
+  - `schedulePausedSince` - its schedules are paused since then (HAS-232).
 
   **A field the service does not know is left out**, never answered as closed, zero or
   unreachable: nothing before the first report, no position from an Eaton blind, no
-  `reachable` right after a restart.
+  `reachable` right after a restart, no `lastCommandConfirmed` before a command was judged.
 - **A Gen1 action** (`device` is the registry id of the blind, set in the `roller_*_url` of the
   device): `open` and `close` come when the roller **starts** that way (`opening` / `closing`),
   `stop` when it stopped - at an end or anywhere; after a stop the device is answered at once and
@@ -401,3 +420,6 @@ changes nothing (it reads the weather of the last minute):
   `device_id`, `fired_on` (the local date), `fired_at`, `outcome` (`MOVED`, `FAILED`,
   `UNSUPPORTED`). `UNIQUE (schedule_id, device_id, fired_on)`: once a day, whatever the engine
   remembers. Gone with its schedule; no retention yet - a few rows a day.
+- **`blinds_availability_alert`** (`V5`, HAS-250): one row per Shelly blind the household was
+  told does not answer - `device_id`, `name`, `room`, `since`, `last_alert_at` (the alert or the
+  last reminder); written once the broker took the message, deleted with the return.

@@ -8,6 +8,7 @@ import cloud.cholewa.blinds.model.BlindReading;
 import cloud.cholewa.blinds.model.BlindState;
 import cloud.cholewa.blinds.model.BlindStatus;
 import cloud.cholewa.blinds.model.CommandSource;
+import cloud.cholewa.blinds.model.CommandTarget;
 import cloud.cholewa.blinds.model.Direction;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -47,6 +48,9 @@ public class BlindStateTracker {
     //next poll, and two polls lie more than their 60 s apart (fixedDelay counts from the end of a
     //pass, which may wait for devices that time out) - so twice that
     public static final Duration COMMAND_WINDOW = Duration.ofMinutes(2);
+    //how long a command of a Gen2+ cover waits for the report that answers it (HAS-250): the cover
+    //publishes a change at once. A Gen1 roller and an Eaton actuator get COMMAND_WINDOW - two polls
+    public static final Duration GEN2_CONFIRM_WINDOW = Duration.ofSeconds(60);
     static final String EXTERNAL = "external";
 
     //the width of the column: the word of a device is not trusted to be short
@@ -61,6 +65,9 @@ public class BlindStateTracker {
     //are inserted in the order the states changed - the latest row (the highest id) is what a
     //restart reads back. Only the last one is held, never a chain of them
     private final Map<Long, Sinks.Empty<Void>> writes = new ConcurrentHashMap<>();
+    //what the commands of every blind came to since the start (HAS-250), in memory only: a restart
+    //knows of no command, and lastCommandConfirmed is left out of the reads until the next one
+    private final Map<Long, Confirmations> confirmations = new ConcurrentHashMap<>();
     private final Mono<Void> restored;
 
     public BlindStateTracker(final BlindStateRepository repository, final Clock clock) {
@@ -90,22 +97,28 @@ public class BlindStateTracker {
      * A command of this service is about to go out: the movement it starts is attributed to its
      * source. Noted before it is sent - a device may report the movement before it answers - and
      * kept when the call fails: a command that timed out may have moved the blind all the same.
+     * <p>
+     * A stop is the only command that explains the rest that ends a movement; any other leaves that
+     * rest to whoever started the movement. The direction of an open or a close of an Eaton blind is
+     * the movement the command waits for (HAS-291): its start may never be reported - see
+     * {@link #decide}.
+     * <p>
+     * Every command waits for a report that answers it (HAS-250) - {@link #unconfirmed} once its
+     * window has passed without one. A command of a Shelly blind already where it asks it to be has
+     * nothing to wait for: a cover that does not move publishes nothing. Neither has a stop of an
+     * Eaton blind at rest; an open or a close of one always waits - the actuator knows no end.
      *
-     * @param stop      whether the command stops the blind - only such a command explains the rest that
-     *                  ends a movement; any other leaves that rest to whoever started the movement
-     * @param direction the direction an open or a close moves the blind in; {@code null} for a stop
-     *                  or a position. Of an Eaton blind it is the movement the command waits for
-     *                  (HAS-291): its start may never be reported - see {@link #decide}
      * @return the command, for {@link #awaitingMovement} and {@link #unconfirmed}
      */
-    public IssuedCommand commanded(
-        final Blind blind,
-        final CommandSource source,
-        final boolean stop,
-        final Direction direction
-    ) {
-        final Direction expected = blind.binding() instanceof BlindBinding.Eaton ? direction : null;
-        final IssuedCommand command = new IssuedCommand(source.value(), stop, expected, Instant.now(clock));
+    public IssuedCommand commanded(final Blind blind, final CommandSource source, final CommandTarget target) {
+        final boolean eaton = blind.binding() instanceof BlindBinding.Eaton;
+        final Direction expected = eaton ? target.direction() : null;
+        final BlindStatus known = statuses.get(blind.id());
+        //an Eaton actuator runs on an open or a close wherever it is; a stop of one at rest changes nothing
+        final boolean alreadyThere = (!eaton || target.stop()) && known != null && target.answeredBy(known.state(), known.position());
+        final Duration window = blind.binding() instanceof BlindBinding.ShellyGen2 ? GEN2_CONFIRM_WINDOW : COMMAND_WINDOW;
+        final IssuedCommand command = new IssuedCommand(source.value(), target, expected, Instant.now(clock),
+            !alreadyThere, window);
         final IssuedCommand replaced = commands.put(blind.id(), command);
         //the newer command takes the wait over: the older one is never reported unconfirmed
         if (replaced != null) {
@@ -124,17 +137,47 @@ public class BlindStateTracker {
     }
 
     /**
-     * Ends the wait for this command once its window has passed: {@code true} when nothing confirmed
-     * it - no movement and no stop it could be read from - and no newer command took its place.
-     * The state is left as it is.
+     * Ends the wait for this command once its window has passed. Reported when no report of the
+     * device answered it and no newer command took its place - once; the state is left as it is,
+     * and a movement reported later is still attributed to it while {@link #COMMAND_WINDOW} lasts.
+     *
+     * @return how many commands of the blind in a row went unconfirmed, this one included, and
+     *         whether the household was told of that run; {@link Unconfirmed#NONE} when the command
+     *         was answered, replaced or waits for nothing
      */
-    public boolean unconfirmed(final Blind blind, final IssuedCommand command) {
-        if (command.expected() == null) {
-            return false;
-        }
-        commands.remove(blind.id(), command);
+    public Unconfirmed unconfirmed(final Blind blind, final IssuedCommand command) {
         //settled here too, so a command is reported once
-        return command.settle();
+        if (!command.awaitsConfirmation() || !command.settle()) {
+            return Unconfirmed.NONE;
+        }
+        final Confirmations after = confirmations.merge(blind.id(), new Confirmations(false, 1, false),
+            (before, unused) -> new Confirmations(false, before.unconfirmedInARow() + 1, before.announced()));
+        return new Unconfirmed(after.unconfirmedInARow(), after.announced());
+    }
+
+    /** The household was told the blind leaves its commands unconfirmed: not again until one is confirmed. */
+    public void unconfirmedAnnounced(final Blind blind) {
+        confirmations.computeIfPresent(blind.id(),
+            (id, known) -> new Confirmations(known.lastConfirmed(), known.unconfirmedInARow(), true));
+    }
+
+    /**
+     * Whether the last command of the blind was confirmed - {@code false} from the end of its window
+     * until a command is confirmed or the device reports a movement; {@code null} when no command
+     * was judged since the start.
+     */
+    public Boolean lastCommandConfirmed(final long id) {
+        final Confirmations known = confirmations.get(id);
+        return known == null ? null : known.lastConfirmed();
+    }
+
+    private void confirmed(final long id) {
+        confirmations.put(id, new Confirmations(true, 0, false));
+    }
+
+    //a blind that moves is no longer one that leaves its commands unanswered, whoever moved it
+    private void moved(final long id) {
+        confirmations.computeIfPresent(id, (key, known) -> known.lastConfirmed() ? known : new Confirmations(true, 0, false));
     }
 
     public Mono<Void> observe(final Blind blind, final BlindReading reading) {
@@ -156,13 +199,18 @@ public class BlindStateTracker {
                 return decision.get().status();
             });
 
+            //the change the command started, or a report of the blind where the command asks it to be -
+            //a movement the state already had (a blind moving that way before the command) included:
+            //nothing changed, and yet the command has its answer
+            if (command != null && (decision.get().commandUsed() || command.target().answeredBy(reading.state(), reading.position()))
+                && command.settle() && command.awaitsConfirmation()) {
+                confirmed(blind.id());
+            }
             if (decision.get().commandUsed()) {
-                command.settle();
                 commands.remove(blind.id(), command);
-            } else if (command != null && reading.state().moving()) {
-                //a movement the state already had (a blind moving that way before the command):
-                //nothing changed, and yet the command has its answer
-                command.settle();
+            }
+            if (decision.get().changed()) {
+                moved(blind.id());
             }
             if (Boolean.FALSE.equals(before.get().reachable())) {
                 log.info("Blind {} ({}) is reachable again", blind.id(), blind.name());
@@ -330,25 +378,73 @@ public class BlindStateTracker {
         }
     }
 
+    /**
+     * What the unconfirmed command of a blind came to.
+     *
+     * @param inARow    how many commands of the blind in a row went unconfirmed, this one included;
+     *                  0 when this one was not reported
+     * @param announced whether the household was already told of this run
+     */
+    public record Unconfirmed(int inARow, boolean announced) {
+
+        public static final Unconfirmed NONE = new Unconfirmed(0, false);
+
+        public boolean reported() {
+            return inARow > 0;
+        }
+    }
+
+    private record Confirmations(boolean lastConfirmed, int unconfirmedInARow, boolean announced) {
+    }
+
     /** A command as it was sent; the same object is asked about later, so a newer one is told apart. */
     public static final class IssuedCommand {
 
         private final String source;
-        private final boolean stop;
+        private final CommandTarget target;
         private final Direction expected;
         private final Instant at;
+        private final boolean awaitsConfirmation;
+        private final Duration window;
         private final AtomicBoolean settled = new AtomicBoolean();
 
-        private IssuedCommand(final String source, final boolean stop, final Direction expected, final Instant at) {
+        private IssuedCommand(
+            final String source,
+            final CommandTarget target,
+            final Direction expected,
+            final Instant at,
+            final boolean awaitsConfirmation,
+            final Duration window
+        ) {
             this.source = source;
-            this.stop = stop;
+            this.target = target;
             this.expected = expected;
             this.at = at;
+            this.awaitsConfirmation = awaitsConfirmation;
+            this.window = window;
         }
 
         /** Whether the command waits for a movement of an Eaton blind, which may never be reported. */
         public boolean expectsMovement() {
             return expected != null;
+        }
+
+        /** Whether the command waits for a report that answers it; not when the blind already was where it asks. */
+        public boolean awaitsConfirmation() {
+            return awaitsConfirmation;
+        }
+
+        /** How long after it was sent the command waits for its answer. */
+        public Duration window() {
+            return window;
+        }
+
+        public String source() {
+            return source;
+        }
+
+        public CommandTarget target() {
+            return target;
         }
 
         Direction expected() {
@@ -369,7 +465,7 @@ public class BlindStateTracker {
         }
 
         PendingCommand pending() {
-            return new PendingCommand(source, stop, settled() ? null : expected);
+            return new PendingCommand(source, target.stop(), settled() ? null : expected);
         }
     }
 }
