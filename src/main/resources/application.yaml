@@ -144,6 +144,12 @@ blinds:
   # gateways are read every 5 min, so 10 min to 24 h
   window:
     gateway-silent-after: PT30M
+  # the availability monitor of the Shelly blinds (HAS-250): an alert once a blind has been
+  # unreachable this long (a Gen1 roller is polled every minute), a reminder while it lasts; a bare
+  # number is minutes
+  monitor:
+    offline-after: PT5M
+    reminder-every: PT1H
 
 # what has no default in this document: a pod without one of them does not start (cholewa-commons,
 # checked before the first bean is created)

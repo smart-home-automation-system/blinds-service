@@ -7,6 +7,7 @@ import cloud.cholewa.blinds.error.BlindsException;
 import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindCommand;
 import cloud.cholewa.blinds.model.CommandSource;
+import cloud.cholewa.blinds.model.CommandTarget;
 import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.model.RoomCommandReply;
 import cloud.cholewa.blinds.model.RoomCommandReply.BlindOutcome;
@@ -38,7 +39,7 @@ public class BlindsCommandService {
     private final BlindsDrivers blindsDrivers;
     private final ProtectionGuard protectionGuard;
     private final BlindStateTracker blindStateTracker;
-    private final EatonMoveConfirmation eatonMoveConfirmation;
+    private final MoveConfirmation moveConfirmation;
 
     public Mono<Void> move(final long id, final BlindCommand command, final CommandSource source) {
         return blindRegistry.find(id).flatMap(blind -> move(blind, command, source));
@@ -46,7 +47,7 @@ public class BlindsCommandService {
 
     public Mono<Void> moveTo(final long id, final int position, final CommandSource source) {
         return blindRegistry.find(id).flatMap(blind -> blind.positioning()
-            ? execute(blind, source, "go to " + position, false, null, driver -> driver.moveTo(blind, position))
+            ? execute(blind, source, "go to " + position, CommandTarget.position(position), driver -> driver.moveTo(blind, position))
             : Mono.error(BlindsException.unsupportedPosition(blind)));
     }
 
@@ -90,7 +91,7 @@ public class BlindsCommandService {
     }
 
     private Mono<Void> move(final Blind blind, final BlindCommand command, final CommandSource source) {
-        return execute(blind, source, command.value(), command == BlindCommand.STOP, directionOf(command),
+        return execute(blind, source, command.value(), targetOf(command),
             driver -> driver.move(blind, command));
     }
 
@@ -98,28 +99,27 @@ public class BlindsCommandService {
         final Blind blind,
         final CommandSource source,
         final String what,
-        final boolean stop,
-        final Direction direction,
+        final CommandTarget target,
         final Function<BlindsDriver, Mono<Void>> call
     ) {
         return protectionGuard.check(blind, source)
             .then(Mono.defer(() -> {
                 log.info("Blind {} ({}, {}) asked to {} by {}",
                     blind.id(), blind.name(), blind.room().getValue(), what, source.value());
-                final IssuedCommand issued = blindStateTracker.commanded(blind, source, stop, direction);
+                final IssuedCommand issued = blindStateTracker.commanded(blind, source, target);
                 //the wait for the movement starts once the command is sent; a command that failed
                 //may have moved the blind, and its movement is still attributed, but nobody asks
                 return call.apply(blindsDrivers.of(blind))
-                    .doOnSuccess(sent -> eatonMoveConfirmation.start(blind, issued));
+                    .doOnSuccess(sent -> moveConfirmation.start(blind, issued));
             }))
             .onErrorMap(e -> !(e instanceof BlindsException), e -> BlindsException.deviceFailed(blind, e));
     }
 
-    private static Direction directionOf(final BlindCommand command) {
+    private static CommandTarget targetOf(final BlindCommand command) {
         return switch (command) {
-            case OPEN -> Direction.OPEN;
-            case CLOSE -> Direction.CLOSE;
-            case STOP -> null;
+            case OPEN -> CommandTarget.move(Direction.OPEN);
+            case CLOSE -> CommandTarget.move(Direction.CLOSE);
+            case STOP -> CommandTarget.halt();
         };
     }
 

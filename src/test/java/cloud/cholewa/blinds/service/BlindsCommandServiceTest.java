@@ -8,6 +8,7 @@ import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindBinding;
 import cloud.cholewa.blinds.model.BlindCommand;
 import cloud.cholewa.blinds.model.CommandSource;
+import cloud.cholewa.blinds.model.CommandTarget;
 import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.model.RoomCommandReply.BlindOutcome;
 import cloud.cholewa.blinds.registry.BlindRegistry;
@@ -27,7 +28,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -46,7 +46,7 @@ class BlindsCommandServiceTest {
     private final BlindsDriver driver = mock(BlindsDriver.class);
     private final ProtectionGuard protection = mock(ProtectionGuard.class);
     private final BlindStateTracker tracker = mock(BlindStateTracker.class);
-    private final EatonMoveConfirmation confirmation = mock(EatonMoveConfirmation.class);
+    private final MoveConfirmation confirmation = mock(MoveConfirmation.class);
     private final BlindsCommandService service = new BlindsCommandService(registry, drivers, protection, tracker, confirmation);
 
     @BeforeEach
@@ -66,7 +66,7 @@ class BlindsCommandServiceTest {
         //noted before it goes out: the device may report the movement before it answers
         final InOrder order = inOrder(protection, tracker, driver);
         order.verify(protection).check(KITCHEN, CommandSource.SCHEDULE);
-        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE, false, Direction.CLOSE);
+        order.verify(tracker).commanded(KITCHEN, CommandSource.SCHEDULE, CommandTarget.move(Direction.CLOSE));
         order.verify(driver).move(KITCHEN, BlindCommand.CLOSE);
     }
 
@@ -75,7 +75,7 @@ class BlindsCommandServiceTest {
     @Test
     void should_start_the_confirmation_of_a_sent_command_with_its_direction() {
         final BlindStateTracker.IssuedCommand issued = mock(BlindStateTracker.IssuedCommand.class);
-        when(tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN)).thenReturn(issued);
+        when(tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN))).thenReturn(issued);
         when(driver.move(KITCHEN, BlindCommand.OPEN)).thenReturn(Mono.empty());
         when(driver.move(KITCHEN, BlindCommand.STOP)).thenReturn(Mono.empty());
         when(driver.moveTo(OFFICE, 30)).thenReturn(Mono.empty());
@@ -87,8 +87,8 @@ class BlindsCommandServiceTest {
         final InOrder order = inOrder(driver, confirmation);
         order.verify(driver).move(KITCHEN, BlindCommand.OPEN);
         order.verify(confirmation).start(KITCHEN, issued);
-        verify(tracker).commanded(KITCHEN, CommandSource.DASHBOARD, true, null);
-        verify(tracker).commanded(OFFICE, CommandSource.DASHBOARD, false, null);
+        verify(tracker).commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.halt());
+        verify(tracker).commanded(OFFICE, CommandSource.DASHBOARD, CommandTarget.position(30));
     }
 
     //a command that failed may have moved the blind, but nobody asks after it
@@ -132,7 +132,7 @@ class BlindsCommandServiceTest {
             .verify();
 
         assertThat(called).isFalse();
-        verify(tracker, never()).commanded(any(), any(), anyBoolean(), any());
+        verify(tracker, never()).commanded(any(), any(), any());
     }
 
     @Test

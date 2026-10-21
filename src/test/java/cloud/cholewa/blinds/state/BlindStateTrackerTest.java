@@ -8,6 +8,7 @@ import cloud.cholewa.blinds.model.BlindReading;
 import cloud.cholewa.blinds.model.BlindState;
 import cloud.cholewa.blinds.model.BlindStatus;
 import cloud.cholewa.blinds.model.CommandSource;
+import cloud.cholewa.blinds.model.CommandTarget;
 import cloud.cholewa.blinds.model.Direction;
 import cloud.cholewa.blinds.state.BlindStateTracker.IssuedCommand;
 import cloud.cholewa.home.model.BlindsPlacement;
@@ -52,6 +53,8 @@ class BlindStateTrackerTest {
         new BlindBinding.ShellyGen2("10.0.0.50", 0, "shellyplus2pm-a1"), BlindsPlacement.EXTERNAL, true);
     private static final Blind KITCHEN = new Blind(9, "Kitchen", RoomName.KITCHEN, SmartVendor.EATON,
         new BlindBinding.Eaton(9), BlindsPlacement.EXTERNAL, false);
+    private static final Blind ROLLER = new Blind(52, "Office window", RoomName.OFFICE, SmartVendor.SHELLY,
+        new BlindBinding.ShellyGen1("10.0.0.51", 0), BlindsPlacement.EXTERNAL, true);
 
     private final MovableClock clock = new MovableClock(START);
     private final BlindStateRepository repository = mock(BlindStateRepository.class);
@@ -353,7 +356,7 @@ class BlindStateTrackerTest {
 
     @Test
     void should_attribute_the_next_change_to_a_command_once() {
-        tracker.commanded(DOOR, CommandSource.DASHBOARD, false, Direction.OPEN);
+        tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
         clock.move(Duration.ofSeconds(2));
         tracker.observe(DOOR, reading(BlindState.OPENING, 10, "HTTP_in")).as(StepVerifier::create).verifyComplete();
         tracker.observe(DOOR, reading(BlindState.OPEN, 100, "limit_switch")).as(StepVerifier::create).verifyComplete();
@@ -367,7 +370,7 @@ class BlindStateTrackerTest {
 
     @Test
     void should_not_attribute_a_change_long_after_the_command() {
-        tracker.commanded(DOOR, CommandSource.SCHEDULE, false, Direction.CLOSE);
+        tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.move(Direction.CLOSE));
         clock.move(BlindStateTracker.COMMAND_WINDOW.plusSeconds(1));
         tracker.observe(DOOR, reading(BlindState.CLOSING, 90, "button")).as(StepVerifier::create).verifyComplete();
 
@@ -416,7 +419,7 @@ class BlindStateTrackerTest {
 
     @Test
     void should_end_the_movement_of_an_eaton_command_with_a_lone_stop_and_attribute_it_once() {
-        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.CLOSE));
         clock.move(Duration.ofSeconds(30));
         tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(0).orElseThrow()).as(StepVerifier::create).verifyComplete();
 
@@ -424,7 +427,7 @@ class BlindStateTrackerTest {
             .expectNext(new BlindStatus(BlindState.STOPPED, null, Direction.CLOSE, NOW.plusSeconds(30), "dashboard", true))
             .verifyComplete();
         assertThat(tracker.awaitingMovement(KITCHEN, issued)).isFalse();
-        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued).reported()).isFalse();
     }
 
     //nothing at all within the window: unconfirmed, and the state is what it was
@@ -432,44 +435,44 @@ class BlindStateTrackerTest {
     void should_leave_the_state_of_a_command_nothing_confirmed() {
         tracker.observe(KITCHEN, new BlindReading(BlindState.STOPPED, null, Direction.OPEN, null))
             .as(StepVerifier::create).verifyComplete();
-        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.SCHEDULE, false, Direction.CLOSE);
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.SCHEDULE, CommandTarget.move(Direction.CLOSE));
 
         assertThat(tracker.awaitingMovement(KITCHEN, issued)).isTrue();
         clock.move(BlindStateTracker.COMMAND_WINDOW);
-        assertThat(tracker.unconfirmed(KITCHEN, issued)).isTrue();
+        assertThat(tracker.unconfirmed(KITCHEN, issued).reported()).isTrue();
 
         tracker.status(9).map(BlindStatus::lastDirection).as(StepVerifier::create).expectNext(Direction.OPEN).verifyComplete();
-        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued).reported()).isFalse();
     }
 
     @Test
     void should_stop_waiting_once_the_movement_is_reported() {
-        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN);
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
         tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(1).orElseThrow()).as(StepVerifier::create).verifyComplete();
 
         assertThat(tracker.awaitingMovement(KITCHEN, issued)).isFalse();
-        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued).reported()).isFalse();
     }
 
     //a movement the state already had: nothing changes, and still the command has its answer
     @Test
     void should_take_a_movement_the_state_already_had_as_the_answer() {
         tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(2).orElseThrow()).as(StepVerifier::create).verifyComplete();
-        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        final IssuedCommand issued = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.CLOSE));
         tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(2).orElseThrow()).as(StepVerifier::create).verifyComplete();
 
         assertThat(tracker.awaitingMovement(KITCHEN, issued)).isFalse();
-        assertThat(tracker.unconfirmed(KITCHEN, issued)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, issued).reported()).isFalse();
     }
 
     //a newer command takes the place of the older one: only the newer one is waited for
     @Test
     void should_wait_for_the_latest_command_only() {
-        final IssuedCommand first = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
-        final IssuedCommand second = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN);
+        final IssuedCommand first = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.CLOSE));
+        final IssuedCommand second = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
 
         assertThat(tracker.awaitingMovement(KITCHEN, first)).isFalse();
-        assertThat(tracker.unconfirmed(KITCHEN, first)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, first).reported()).isFalse();
         assertThat(tracker.awaitingMovement(KITCHEN, second)).isTrue();
     }
 
@@ -477,23 +480,133 @@ class BlindStateTrackerTest {
     //unconfirmed two minutes later, once nothing newer waits any more
     @Test
     void should_never_report_a_replaced_command_unconfirmed() {
-        final IssuedCommand close = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.CLOSE);
-        final IssuedCommand open = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, false, Direction.OPEN);
+        final IssuedCommand close = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.CLOSE));
+        final IssuedCommand open = tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
         tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(1).orElseThrow()).as(StepVerifier::create).verifyComplete();
         clock.move(BlindStateTracker.COMMAND_WINDOW);
 
-        assertThat(tracker.unconfirmed(KITCHEN, open)).isFalse();
-        assertThat(tracker.unconfirmed(KITCHEN, close)).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, open).reported()).isFalse();
+        assertThat(tracker.unconfirmed(KITCHEN, close).reported()).isFalse();
     }
 
-    //a Shelly reports its movement and its position itself: no wait, no lone stop read as an end
+    //a Shelly reports its movement and its position itself: no status request, no lone stop read as an end
     @Test
     void should_wait_for_no_movement_of_a_blind_other_than_eaton() {
-        final IssuedCommand issued = tracker.commanded(DOOR, CommandSource.DASHBOARD, false, Direction.CLOSE);
+        final IssuedCommand issued = tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.move(Direction.CLOSE));
 
         assertThat(issued.expectsMovement()).isFalse();
         assertThat(tracker.awaitingMovement(DOOR, issued)).isFalse();
-        assertThat(tracker.unconfirmed(DOOR, issued)).isFalse();
+    }
+
+    // ---- the answer to every command (HAS-250)
+
+    @Test
+    void should_give_a_gen2_cover_a_minute_and_a_gen1_roller_and_an_eaton_actuator_two() {
+        assertThat(tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.halt()).window())
+            .isEqualTo(Duration.ofSeconds(60));
+        assertThat(tracker.commanded(ROLLER, CommandSource.DASHBOARD, CommandTarget.halt()).window())
+            .isEqualTo(BlindStateTracker.COMMAND_WINDOW);
+        assertThat(tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.halt()).window())
+            .isEqualTo(BlindStateTracker.COMMAND_WINDOW);
+    }
+
+    @Test
+    void should_know_no_answer_of_a_blind_no_command_was_judged_for() {
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.lastCommandConfirmed(53)).isNull();
+    }
+
+    @Test
+    void should_confirm_a_command_by_the_movement_it_starts() {
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+        final IssuedCommand issued = tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
+        tracker.observe(DOOR, reading(BlindState.OPENING, 5, "HTTP_in")).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.lastCommandConfirmed(53)).isTrue();
+        assertThat(tracker.unconfirmed(DOOR, issued)).isEqualTo(BlindStateTracker.Unconfirmed.NONE);
+    }
+
+    //a Gen1 roller that finished between two polls: the poll finds it where the command asked
+    @Test
+    void should_confirm_a_command_by_a_report_of_the_blind_where_it_asked_it_to_be() {
+        tracker.observe(ROLLER, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+        final IssuedCommand issued = tracker.commanded(ROLLER, CommandSource.SCHEDULE, CommandTarget.position(40));
+        tracker.observe(ROLLER, reading(BlindState.STOPPED, 40, null)).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.lastCommandConfirmed(52)).isTrue();
+        assertThat(tracker.unconfirmed(ROLLER, issued).reported()).isFalse();
+    }
+
+    //the periodic status of a cover that did not move answers nothing
+    @Test
+    void should_not_take_a_report_of_the_old_state_as_the_answer() {
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+        final IssuedCommand issued = tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.unconfirmed(DOOR, issued)).isEqualTo(new BlindStateTracker.Unconfirmed(1, false));
+        assertThat(tracker.lastCommandConfirmed(53)).isFalse();
+    }
+
+    //a cover that does not move publishes nothing: there is nothing to wait for
+    @Test
+    void should_wait_for_nothing_when_a_shelly_blind_already_is_where_the_command_asks() {
+        tracker.observe(DOOR, reading(BlindState.OPEN, 100, null)).as(StepVerifier::create).verifyComplete();
+
+        final IssuedCommand open = tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.move(Direction.OPEN));
+        final IssuedCommand there = tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.position(100));
+        final IssuedCommand stop = tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.halt());
+
+        assertThat(open.awaitsConfirmation()).isFalse();
+        assertThat(there.awaitsConfirmation()).isFalse();
+        assertThat(stop.awaitsConfirmation()).isFalse();
+        assertThat(tracker.unconfirmed(DOOR, stop).reported()).isFalse();
+        assertThat(tracker.lastCommandConfirmed(53)).isNull();
+    }
+
+    //an Eaton actuator knows no end: it runs and reports, so its command always waits (HAS-291)
+    @Test
+    void should_always_wait_for_an_eaton_actuator() {
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(0).orElseThrow()).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.commanded(KITCHEN, CommandSource.SCHEDULE, CommandTarget.halt()).awaitsConfirmation()).isTrue();
+    }
+
+    @Test
+    void should_count_the_unconfirmed_commands_in_a_row_until_one_is_confirmed() {
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.unconfirmed(DOOR, tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.move(Direction.OPEN))).inARow())
+            .isEqualTo(1);
+        assertThat(tracker.unconfirmed(DOOR, tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.move(Direction.OPEN))).inARow())
+            .isEqualTo(2);
+        tracker.unconfirmedAnnounced(DOOR);
+        assertThat(tracker.unconfirmed(DOOR, tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.move(Direction.OPEN))))
+            .isEqualTo(new BlindStateTracker.Unconfirmed(3, true));
+
+        tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
+        tracker.observe(DOOR, reading(BlindState.OPENING, 3, null)).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.lastCommandConfirmed(53)).isTrue();
+        assertThat(tracker.unconfirmed(DOOR, tracker.commanded(DOOR, CommandSource.SCHEDULE, CommandTarget.move(Direction.CLOSE))))
+            .isEqualTo(new BlindStateTracker.Unconfirmed(1, false));
+    }
+
+    //a blind that moves - by a button, or late - leaves its commands unanswered no longer
+    @Test
+    void should_take_a_movement_reported_after_an_unconfirmed_command_as_the_end_of_it() {
+        tracker.observe(DOOR, reading(BlindState.CLOSED, 0, null)).as(StepVerifier::create).verifyComplete();
+        final IssuedCommand issued = tracker.commanded(DOOR, CommandSource.DASHBOARD, CommandTarget.move(Direction.OPEN));
+        clock.move(BlindStateTracker.GEN2_CONFIRM_WINDOW);
+        assertThat(tracker.unconfirmed(DOOR, issued).reported()).isTrue();
+
+        clock.move(Duration.ofSeconds(30));
+        tracker.observe(DOOR, reading(BlindState.OPENING, 5, "HTTP_in")).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.lastCommandConfirmed(53)).isTrue();
+        //still within the two minutes a command is attributed for
+        tracker.status(53).map(BlindStatus::source).as(StepVerifier::create).expectNext("dashboard").verifyComplete();
     }
 
     // ---- reachability

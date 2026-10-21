@@ -7,7 +7,9 @@ and moves them on command through three drivers; since HAS-245 it tracks the rea
 blind from what the devices report and serves it (`GET /home/blinds`, `/rooms/{room}`, `/{id}`);
 since HAS-246 it stores the schedules (`/home/blinds/schedules`, CRUD); since HAS-247 the schedule
 engine runs them every minute and `GET /schedules/{id}/today` shows what it makes of one; since
-HAS-290 it reads the window sensors of every blind, and a window may run past midnight.
+HAS-290 it reads the window sensors of every blind, and a window may run past midnight; since HAS-250
+it tells the household when a Shelly blind stops answering and when a blind leaves its commands
+unconfirmed.
 
 Part of the smart-home-automation-system organization — org-wide conventions, the
 repository map and working rules come from the workspace-level context
@@ -33,8 +35,8 @@ review.
   database 4 / water 2 / presence 2 / blinds 2 = 12 of 22), pinned by
   `BlindsServiceApplicationTest`. Tables: `blinds_state` (`V1`, HAS-245); `blinds_schedule`,
   `blinds_schedule_target`, `blinds_schedule_condition` (`V2`, HAS-246); `blinds_schedule_run`
-  (`V3`, HAS-247). **The next migration is `V4`** - the Jira descriptions of the epic count one
-  higher (they gave the runs `V4`): HAS-248 (overrides) takes V4.
+  (`V3`, HAS-247); `blinds_schedule_pause` (`V4`, HAS-232); `blinds_availability_alert` (`V5`,
+  HAS-250). **The next migration is `V6`**.
 - Integrates with hardware: the Eaton blinds through `amx-service`, the Shelly blinds over HTTP
   (commands, since HAS-244) and MQTT (their status topics — HAS-245). Registered for the
   verification of HAS-244: `Office window` (id 52, Gen1 SHSW-25) and `Office door` (id 53, Gen2
@@ -100,23 +102,53 @@ review.
 - **An Eaton movement is confirmed, not assumed** (HAS-291): the `70` of a start may be lost
   (the kitchen, 2026-10-16: only the final `00` arrived), and the gateway's `C3 1C 04` proves
   nothing about the actuator.
-  - `commanded(blind, source, stop, direction)` returns the `IssuedCommand`; only an open or a
-    close of an Eaton blind waits for a movement (`expectsMovement`). `EatonMoveConfirmation`
-    asks the tracker about **that object**, so a newer command is told apart; a replaced
-    command is settled at once and never reported.
+  - `commanded(...)` returns the `IssuedCommand`; only an open or a close of an Eaton blind
+    waits for a movement (`expectsMovement`). `MoveConfirmation` asks the tracker about **that
+    object**, so a newer command is told apart; a replaced command is settled at once and never
+    reported.
   - After `blinds.eaton.confirm-after` (`EatonProperties`, `PT5S`, 1–60 s) without a movement,
     one status request through `amx-service` (`EatonDriver.requestStatus`); its answer is the
     usual status event. A failed request is a WARN - never repeated.
   - `decide()`: a `00` without a position while the command still `expected` a direction is the
     end of a movement that way, with the command's source. A stop command keeps its meaning.
     A status answer `00` from an actuator that never got the command reads the same - accepted
-    in the task; HAS-250 may refine it.
-  - Nothing within `COMMAND_WINDOW`: `unconfirmed()` once, a WARN, the state untouched.
+    in HAS-291, not refined in HAS-250.
   - The wait is a `Mono.delay` chain subscribed in `start()` with `.contextCapture()` (the
     `traceId` of the command) and an error consumer; a restart forgets the waits.
+- **Every command waits for its answer** (HAS-250, `MoveConfirmation`, which took over
+  `EatonMoveConfirmation`): `commanded(blind, source, CommandTarget)` - the target is an open or a
+  close, a stop or a position, and `CommandTarget.answeredBy` says which report answers it (moving
+  its way or at its end, any rest, moving or at the position; pinned by `CommandTargetTest`).
+  - The window is the binding's: a Gen2+ cover 60 s (`GEN2_CONFIRM_WINDOW`, it publishes a change
+    at once), a Gen1 roller and an Eaton actuator `COMMAND_WINDOW` (two polls). Only a sent command
+    waits - a failed one is the caller's 502 and the availability monitor's.
+  - A command of a **Shelly** blind already where it asks has nothing to wait for
+    (`awaitsConfirmation` false): a cover that does not move publishes nothing. Never for Eaton -
+    the actuator knows no end, it runs and reports.
+  - The answer is the change the command started (`commandUsed`) or a report that answers its target;
+    a movement the state already had counts (the HAS-291 rule, now by direction).
+  - Nothing in the window: `unconfirmed()` once, a WARN, the state untouched; the command stays
+    in `commands`, so a late movement is still attributed while `COMMAND_WINDOW` lasts.
+  - Per blind, in memory: `lastCommandConfirmed` (`true` / `false`, left out of the reads until a
+    command was judged since the start) and the count in a row. A confirmed command or **any
+    reported change of the state** (a button, a late movement) ends a run of unconfirmed ones.
+  - The third unconfirmed command in a row is an **alert**, once a run (`unconfirmedAnnounced`
+    after the broker took it - a failed publish is tried with the next one); none while the blind
+    is unreachable - the availability monitor speaks for it. No info when it ends.
+- **The availability monitor** (HAS-250), package `monitor`, the shape of light-service's
+  (HAS-264): every minute (from 2 min after the start, only once the registry was read) the
+  Shelly blinds by the reachability of `BlindStateTracker` - a failed Gen1 poll, the MQTT last will
+  of a Gen2+ cover (the reconciliation never changes it). `AvailabilityEvaluator` is pure: out after
+  `blinds.monitor.offline-after` (`MonitorProperties`, PT5M, 2 min - 2 h) counted from the first pass
+  that saw it unreachable, a reminder every `reminder-every` (PT1H, 15 min - 24 h), an info on the
+  return; one message a pass names every blind (ten, the rest counted). Open alerts in
+  `blinds_availability_alert` (V5), written only after the broker took the message, so a restart
+  neither repeats nor forgets one. A return needs the blind to answer: after a restart a blind
+  still out is not "back" in the minutes before it is out again (found here; light-service
+  announces such a false return). Eaton blinds are not watched.
 - **The state reads leave out what is not known** (`BlindView`, `NON_NULL`): no state before
-  the first report, no position from an Eaton blind, no `reachable` after a restart.
-  `protection` comes with HAS-249, `lastCommandConfirmed` with HAS-250.
+  the first report, no position from an Eaton blind, no `reachable` after a restart, no
+  `lastCommandConfirmed` before a command was judged. `protection` comes with HAS-249.
 - **`GET /events/gen1` is unauthenticated** like everything behind the gateway: anyone on the
   LAN can write a Gen1 state. HAS-248 and HAS-249 must not act on a Gen1 state the next poll has
   not confirmed.
