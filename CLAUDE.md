@@ -123,8 +123,9 @@ review.
     at once), a Gen1 roller and an Eaton actuator `COMMAND_WINDOW` (two polls). Only a sent command
     waits - a failed one is the caller's 502 and the availability monitor's.
   - A command of a **Shelly** blind already where it asks has nothing to wait for
-    (`awaitsConfirmation` false): a cover that does not move publishes nothing. Never for Eaton -
-    the actuator knows no end, it runs and reports.
+    (`awaitsConfirmation` false): a cover that does not move publishes nothing. Of an Eaton blind
+    only a stop at rest (found in review): an open or a close always waits - the actuator knows no
+    end, it runs and reports.
   - The answer is the change the command started (`commandUsed`) or a report that answers its target;
     a movement the state already had counts (the HAS-291 rule, now by direction).
   - Nothing in the window: `unconfirmed()` once, a WARN, the state untouched; the command stays

@@ -74,6 +74,7 @@ class AvailabilityMonitorTest {
     private final AvailabilityAlertRepository alertRepository = mock(AvailabilityAlertRepository.class);
     private final NotificationPublisher notificationPublisher = mock(NotificationPublisher.class);
     private AvailabilityMonitor monitor;
+    private Mono<Void> scheduled;
 
     @BeforeEach
     void setUp() {
@@ -232,8 +233,12 @@ class AvailabilityMonitorTest {
         verify(alertRepository, never()).open(eq(52L), anyString(), anyString(), any(), any());
     }
 
+    //Spring subscribes again to the same Mono for every run: so do the tests, with the clock moved on between
     private void check() {
-        monitor.check().as(StepVerifier::create).verifyComplete();
+        if (scheduled == null) {
+            scheduled = monitor.check();
+        }
+        scheduled.as(StepVerifier::create).verifyComplete();
     }
 
     private static BlindStatus reachable(final boolean reachable) {

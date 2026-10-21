@@ -105,7 +105,8 @@ public class BlindStateTracker {
      * <p>
      * Every command waits for a report that answers it (HAS-250) - {@link #unconfirmed} once its
      * window has passed without one. A command of a Shelly blind already where it asks it to be has
-     * nothing to wait for: a cover that does not move publishes nothing.
+     * nothing to wait for: a cover that does not move publishes nothing. Neither has a stop of an
+     * Eaton blind at rest; an open or a close of one always waits - the actuator knows no end.
      *
      * @return the command, for {@link #awaitingMovement} and {@link #unconfirmed}
      */
@@ -113,7 +114,8 @@ public class BlindStateTracker {
         final boolean eaton = blind.binding() instanceof BlindBinding.Eaton;
         final Direction expected = eaton ? target.direction() : null;
         final BlindStatus known = statuses.get(blind.id());
-        final boolean alreadyThere = !eaton && known != null && target.answeredBy(known.state(), known.position());
+        //an Eaton actuator runs on an open or a close wherever it is; a stop of one at rest changes nothing
+        final boolean alreadyThere = (!eaton || target.stop()) && known != null && target.answeredBy(known.state(), known.position());
         final Duration window = blind.binding() instanceof BlindBinding.ShellyGen2 ? GEN2_CONFIRM_WINDOW : COMMAND_WINDOW;
         final IssuedCommand command = new IssuedCommand(source.value(), target, expected, Instant.now(clock),
             !alreadyThere, window);

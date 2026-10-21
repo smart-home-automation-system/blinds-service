@@ -565,12 +565,21 @@ class BlindStateTrackerTest {
         assertThat(tracker.lastCommandConfirmed(53)).isNull();
     }
 
-    //an Eaton actuator knows no end: it runs and reports, so its command always waits (HAS-291)
+    //an Eaton actuator knows no end: it runs and reports, so its open or close always waits (HAS-291);
+    //a stop of one at rest changes nothing and is not reported - found in review
     @Test
-    void should_always_wait_for_an_eaton_actuator() {
-        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(0).orElseThrow()).as(StepVerifier::create).verifyComplete();
+    void should_wait_for_an_eaton_open_or_close_wherever_the_blind_is_but_not_for_a_stop_at_rest() {
+        tracker.observe(KITCHEN, new BlindReading(BlindState.STOPPED, null, Direction.OPEN, null)).as(StepVerifier::create).verifyComplete();
 
-        assertThat(tracker.commanded(KITCHEN, CommandSource.SCHEDULE, CommandTarget.halt()).awaitsConfirmation()).isTrue();
+        assertThat(tracker.commanded(KITCHEN, CommandSource.SCHEDULE, CommandTarget.move(Direction.OPEN)).awaitsConfirmation()).isTrue();
+        assertThat(tracker.commanded(KITCHEN, CommandSource.SCHEDULE, CommandTarget.halt()).awaitsConfirmation()).isFalse();
+    }
+
+    @Test
+    void should_wait_for_a_stop_of_a_moving_eaton_blind() {
+        tracker.observe(KITCHEN, BlindReadings.ofEatonStatus(2).orElseThrow()).as(StepVerifier::create).verifyComplete();
+
+        assertThat(tracker.commanded(KITCHEN, CommandSource.DASHBOARD, CommandTarget.halt()).awaitsConfirmation()).isTrue();
     }
 
     @Test
