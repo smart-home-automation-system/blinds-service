@@ -2,7 +2,6 @@ package cloud.cholewa.blinds;
 
 import cloud.cholewa.commons.database.DatabaseProperties;
 import cloud.cholewa.shelly.http.ShellyHttpClientCustomizer;
-import cloud.cholewa.shelly.http.ShellyHttpClientCustomizer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,10 +38,19 @@ class BlindsServiceApplicationTest {
         assertThat(applicationContext.getBeanNamesForType(ScheduledAnnotationBeanPostProcessor.class)).isEmpty();
     }
 
-    //the Shelly calls of the library reach the log only through the customizer
+    //cholewa-commons >= 1.10.0 logs every call of a WebClient of the injected builder - the clients of
+    //shelly-client included - from inside the reactive chain; a Logbook handler of the service's own
+    //would log every call twice (HAS-301)
     @Test
-    void should_put_the_shelly_calls_into_the_log() {
-        assertThat(applicationContext.getBeanNamesForType(ShellyHttpClientCustomizer.class))
-            .containsExactly("shellyCallsInTheLog");
+    void should_leave_the_logging_of_the_calls_to_the_library() {
+        assertThat(applicationContext.getBeanNamesForType(ShellyHttpClientCustomizer.class)).isEmpty();
+    }
+
+    //six scheduled tasks: with one thread a hung pass stopped all of them for 1.5 hours (2026-10-22);
+    //the pool comes from cholewa-commons >= 1.11.0 (HAS-300, HAS-301)
+    @Test
+    void should_give_the_scheduled_tasks_a_pool() {
+        assertThat(applicationContext.getEnvironment().getProperty("spring.task.scheduling.pool.size", Integer.class))
+            .isEqualTo(10);
     }
 }

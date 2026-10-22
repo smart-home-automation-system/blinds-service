@@ -241,6 +241,19 @@ class AvailabilityMonitorTest {
         scheduled.as(StepVerifier::create).verifyComplete();
     }
 
+    //HAS-301: a read of the alerts that never answers - a dead database connection, 2026-10-22 - ends the
+    //pass at its bound, below the minute between passes
+    @Test
+    void should_end_a_check_that_never_completes_at_its_bound() {
+        when(alertRepository.findAll()).thenReturn(Flux.never());
+
+        StepVerifier.withVirtualTime(monitor::check)
+            .expectSubscription()
+            .expectNoEvent(AvailabilityMonitor.LIMIT.minusSeconds(1))
+            .thenAwait(Duration.ofSeconds(1))
+            .verifyComplete();
+    }
+
     private static BlindStatus reachable(final boolean reachable) {
         return BlindStatus.unknown().withReachable(reachable);
     }

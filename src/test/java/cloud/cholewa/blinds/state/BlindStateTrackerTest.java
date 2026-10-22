@@ -658,6 +658,26 @@ class BlindStateTrackerTest {
         return new BlindStatus(state, position, direction, NOW.minusHours(1), "external", true);
     }
 
+    //code review of HAS-301: a write hung on a dead connection held every later write of the blind - the
+    //next one goes after the bound of the hung one, and the caller of the hung one is not failed
+    @Test
+    void should_let_the_next_write_of_a_blind_go_once_a_hung_one_reaches_its_bound() {
+        //doReturn: when(...) would call the answer of setUp with a null argument
+        doReturn(Mono.never())
+            .doAnswer(invocation -> Mono.just(invocation.getArgument(0)))
+            .when(repository).save(any());
+
+        StepVerifier.withVirtualTime(() -> Mono.when(
+                tracker.observe(DOOR, reading(BlindState.OPENING, 10, "SHC")),
+                tracker.observe(DOOR, reading(BlindState.OPEN, 100, "SHC"))))
+            .expectSubscription()
+            .expectNoEvent(BlindStateTracker.WRITE_TIMEOUT.minusSeconds(1))
+            .thenAwait(Duration.ofSeconds(1))
+            .verifyComplete();
+
+        verify(repository, times(2)).save(any());
+    }
+
     private static BlindReading reading(final BlindState state, final Integer position, final String source) {
         return new BlindReading(state, position, null, source);
     }

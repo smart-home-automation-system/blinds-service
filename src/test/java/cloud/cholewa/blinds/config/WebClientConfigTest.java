@@ -7,7 +7,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
-import org.zalando.logbook.Logbook;
 import reactor.netty.resources.ConnectionProvider;
 import reactor.test.StepVerifier;
 
@@ -70,7 +69,6 @@ class WebClientConfigTest {
         return WebClientConfig.webClient(
             WebClient.builder(),
             connectionProvider,
-            Logbook.create(),
             new InternalServiceProperties.Endpoint(
                 "http://localhost:" + server.getPort(), Duration.ofSeconds(1), responseTimeout)
         );

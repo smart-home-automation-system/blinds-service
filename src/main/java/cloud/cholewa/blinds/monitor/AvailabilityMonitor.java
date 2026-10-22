@@ -11,6 +11,7 @@ import cloud.cholewa.blinds.monitor.AvailabilityEvaluator.Watched;
 import cloud.cholewa.blinds.registry.BlindRegistry;
 import cloud.cholewa.blinds.state.BlindStateTracker;
 import cloud.cholewa.commons.notification.NotificationPublisher;
+import cloud.cholewa.commons.scheduling.ScheduledPass;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -45,6 +46,8 @@ import java.util.stream.Collectors;
 public class AvailabilityMonitor {
 
     static final Duration PUBLISH_TIMEOUT = Duration.ofSeconds(30);
+    //above the publish timeout and the reads of a pass, below the fixed delay (HAS-301)
+    static final Duration LIMIT = Duration.ofSeconds(50);
     static final int MAX_LISTED = 10;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -76,8 +79,14 @@ public class AvailabilityMonitor {
 
     //Spring subscribes again to the same Mono for every run: everything is read inside the chain. Two minutes
     //in: the registry is read by then, and a Gen1 poll has run
+    //Bounded (HAS-301): the state of the tracker, the alerts of the database and at most one notification
+    //(cut off after 30 s by its publisher) - a pass beyond this is hung and ends; the next one judges again
     @Scheduled(initialDelayString = "PT2M", fixedDelayString = "PT1M")
     Mono<Void> check() {
+        return ScheduledPass.bounded("blinds availability monitor", LIMIT, this::checkOnce);
+    }
+
+    private Mono<Void> checkOnce() {
         return Mono.defer(() -> {
                 //before the registry was read every blind would look removed, and its alert be forgotten
                 if (!blindRegistry.loaded()) {

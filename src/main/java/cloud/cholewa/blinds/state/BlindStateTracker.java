@@ -24,6 +24,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -51,6 +52,8 @@ public class BlindStateTracker {
     //how long a command of a Gen2+ cover waits for the report that answers it (HAS-250): the cover
     //publishes a change at once. A Gen1 roller and an Eaton actuator get COMMAND_WINDOW - two polls
     public static final Duration GEN2_CONFIRM_WINDOW = Duration.ofSeconds(60);
+    //one write of a state: well above a healthy INSERT, below the bound of the Gen1 poll (HAS-301)
+    static final Duration WRITE_TIMEOUT = Duration.ofSeconds(30);
     static final String EXTERNAL = "external";
 
     //the width of the column: the word of a device is not trusted to be short
@@ -218,7 +221,17 @@ public class BlindStateTracker {
             //every caller subscribes to what it gets; done is signalled however the write ends,
             //a cancelled one included, so one write that failed holds up none after it
             return (last.get() == null ? Mono.<Void>empty() : last.get().asMono())
-                .then(Mono.defer(() -> write(blind, decision.get(), now)))
+                .then(Mono.defer(() -> write(blind, decision.get(), now))
+                    //a write hung on a dead connection would hold every later write of the blind - the
+                    //MQTT listener's has no bound of its own (code review of HAS-301). The state in memory
+                    //is merged already; only its row is missing, so this is a WARN, not a failure of the
+                    //caller (a poll would take it for an unreachable blind)
+                    .timeout(WRITE_TIMEOUT)
+                    .onErrorResume(TimeoutException.class, e -> {
+                        log.warn("The state of blind {} ({}) was not stored within {}; the next report writes it",
+                            blind.id(), blind.name(), WRITE_TIMEOUT);
+                        return Mono.empty();
+                    }))
                 .doFinally(signal -> done.tryEmitEmpty());
         }));
     }
