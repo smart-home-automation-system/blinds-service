@@ -36,6 +36,6 @@ class ScheduleEnginePassTest {
     //a pass that fires every blind at once takes about three minutes at the worst - well inside
     @Test
     void should_leave_room_for_the_commands_of_a_whole_pass() {
-        assertThat(ScheduleEnginePass.LIMIT).isEqualTo(Duration.ofMinutes(5));
+        assertThat(Duration.ofMinutes(5)).isEqualTo(ScheduleEnginePass.LIMIT);
     }
 }
