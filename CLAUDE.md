@@ -24,7 +24,8 @@ review.
   `database-service` (device registry), `weather-service` and `amx-service` over k8s DNS
   (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
-- Uses libraries: `cholewa-commons` 1.9.0 (pool, error contract, connection names,
+- Uses libraries: `cholewa-commons` 1.11.0 (pool, error contract, connection names, Logbook in the reactive chain,
+  the scheduler pool and `ScheduledPass`,
   `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.12.0 (`SmartDevice` of
   the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.1.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
@@ -248,7 +249,7 @@ review.
 - **One instance, `Recreate`, never scaled**: the schedule engine lives in its memory (holds, the
   blinds sent today). `@EnableScheduling` is in `SchedulingConfig` under `@Profile("!test")`.
 - **What has no default in `home`** - the two broker passwords and the place of the house - is
-  listed in `cholewa.required-properties` (`cholewa-commons` 1.9.0), which refuses the start
+  listed in `cholewa.required-properties` (`cholewa-commons` >= 1.9.0), which refuses the start
   before the first bean; `RequiredPropertiesTest` ties the list to the placeholders. The own
   `BrokerPasswordCheck` copy is gone (HAS-247).
 - **The notification connection is not a bean** (`NotificationRabbitConfig`, the same as in
@@ -260,8 +261,34 @@ review.
   named `ConnectionProvider` with 2 min idle / 30 min life (the gateway's HAS-212 limits): the
   global pool keeps a connection for ever, and a POST to `amx-service` written onto a dead socket
   is not repeated.
-- **Shelly calls through `shelly-client` reach Logbook only via the `ShellyHttpClientCustomizer`
-  bean** (`shellyCallsInTheLog`): the library's clients put their own connector on the builder.
+- **Logbook logs every call from the reactive chain, with its `traceId`** (`cholewa-commons` >= 1.10.0,
+  since HAS-301): the injected `WebClient.Builder` carries Logbook's exchange filter, and the clients
+  of `shelly-client` are built from it too. So the service adds **no Logbook handler of its own** -
+  the `LogbookClientHandler` of `WebClientConfig` and the `shellyCallsInTheLog` customizer are gone,
+  or every call would be logged twice; `BlindsServiceApplicationTest` pins that no
+  `ShellyHttpClientCustomizer` is back.
+- **Every scheduled task is bounded and they run on a pool** (HAS-301, after the service froze on
+  2026-10-22: one pass waited for good on a dead database connection, Spring blocks the scheduler
+  thread until a reactive pass completes, and the one thread stopped all six tasks for 1.5 hours with
+  the health UP). The pool of ten comes from `cholewa-commons` 1.11.0 (pinned by
+  `BlindsServiceApplicationTest`); every `@Scheduled` method returns `ScheduledPass.bounded(task,
+  LIMIT, ...)`, each `LIMIT` pinned by a test that hangs the pass:
+  - the engine 5 min - its commands are never cut off, and a pass that fires every blind takes
+    about 3 min at the worst (14 blinds, each the connect and response timeouts of its client); the
+    reading of the inputs keeps its own 50 s inside. A blind is remembered before its command, so a
+    pass ended at the bound never moves it twice;
+  - the Gen1 poll and the availability monitor 50 s (the minute between passes); the Gen2
+    reconciliation and the window sensors 2 min, the registry 1 min (five minutes between reads).
+  - The tasks may now run **at the same time**: everything they share is a `ConcurrentHashMap` or
+    an atomic (checked in HAS-301; the MQTT listener ran beside them already), and together they
+    may ask the pool of 2 connections for more than it has - an acquire waits up to the pool's
+    `max-acquire-time` (10 s) and only then fails that pass, which the next run repeats.
+    A new scheduled task goes through `ScheduledPass.bounded` too.
+  - **One write of a state is bounded too** (`BlindStateTracker.WRITE_TIMEOUT`, 30 s, code review of
+    HAS-301): the writes of a blind queue one behind the other, and a write of the MQTT listener has no
+    bound of its own - hung on a dead connection it would have held every later write of the blind. At
+    the bound it is a WARN (the state in memory is merged already, only its row is missing), never a
+    failure of the caller - a poll would take that for an unreachable blind.
 - **The test document points everything outward at port 1** (broker, database, the three
   services), so a context test reaches nothing even where the names resolve.
 - **A migration is rehearsed on a throwaway PostgreSQL, never by a local run** — `home,local`
