@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -147,6 +148,31 @@ class BlindStatePollTest {
         final Gen1DeviceStatus status = new Gen1DeviceStatus();
         status.setRollers(List.of(rollers));
         return status;
+    }
+
+    //HAS-301: the write of a state that never answers - a dead database connection, 2026-10-22 - ends the
+    //pass at its bound, below the minute between polls, instead of holding the scheduler for good
+    @Test
+    void should_end_a_gen1_poll_that_never_completes_at_its_bound() {
+        when(gen1.status(anyString())).thenReturn(Mono.just(gen1Status(roller("stop", 100))));
+        when(tracker.observe(any(), any())).thenReturn(Mono.never());
+
+        StepVerifier.withVirtualTime(poll::pollGen1)
+            .expectSubscription()
+            .expectNoEvent(BlindStatePoll.GEN1_LIMIT.minusSeconds(1))
+            .thenAwait(Duration.ofSeconds(1))
+            .verifyComplete();
+    }
+
+    @Test
+    void should_end_a_gen2_reconciliation_that_never_completes_at_its_bound() {
+        when(rpc.coverStatus(anyString(), anyInt())).thenReturn(Mono.never());
+
+        StepVerifier.withVirtualTime(poll::reconcileGen2)
+            .expectSubscription()
+            .expectNoEvent(BlindStatePoll.GEN2_LIMIT.minusSeconds(1))
+            .thenAwait(Duration.ofSeconds(1))
+            .verifyComplete();
     }
 
     private static RollerStatus roller(final String state, final int position) {

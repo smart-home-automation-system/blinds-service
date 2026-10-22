@@ -4,6 +4,7 @@ import cloud.cholewa.blinds.model.Blind;
 import cloud.cholewa.blinds.model.BlindBinding;
 import cloud.cholewa.blinds.model.BlindReading;
 import cloud.cholewa.blinds.registry.BlindRegistry;
+import cloud.cholewa.commons.scheduling.ScheduledPass;
 import cloud.cholewa.shelly.http.ShellyGen1Client;
 import cloud.cholewa.shelly.http.ShellyRpcClient;
 import cloud.cholewa.shelly.model.RollerStatus;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -37,6 +39,11 @@ public class BlindStatePoll {
 
     //a few devices at once: a pass of devices that all time out still ends well within the minute
     private static final int CONCURRENCY = 4;
+    //Bounded (HAS-301): every device call has its client's timeout, the states are written to the
+    //database - a pass beyond these is hung (a dead connection, 2026-10-22) and ends there; the next
+    //one asks again. Below the fixed delays
+    static final Duration GEN1_LIMIT = Duration.ofSeconds(50);
+    static final Duration GEN2_LIMIT = Duration.ofMinutes(2);
 
     private final BlindRegistry blindRegistry;
     private final BlindStateTracker blindStateTracker;
@@ -45,15 +52,17 @@ public class BlindStatePoll {
 
     @Scheduled(initialDelayString = "PT20S", fixedDelayString = "PT60S")
     Mono<Void> pollGen1() {
-        return Mono.defer(() -> pass(blind -> blind.binding() instanceof BlindBinding.ShellyGen1, this::readGen1,
-            (blind, e) -> blindStateTracker.reachability(blind, false, e.toString())));
+        return ScheduledPass.bounded("blinds Gen1 poll", GEN1_LIMIT,
+            () -> pass(blind -> blind.binding() instanceof BlindBinding.ShellyGen1, this::readGen1,
+                (blind, e) -> blindStateTracker.reachability(blind, false, e.toString())));
     }
 
     @Scheduled(initialDelayString = "PT40S", fixedDelayString = "PT5M")
     Mono<Void> reconcileGen2() {
-        return Mono.defer(() -> pass(blind -> blind.binding() instanceof BlindBinding.ShellyGen2, this::readGen2,
-            (blind, e) -> Mono.fromRunnable(() -> log.info("Reconciliation of blind {} ({}) failed: {}",
-                blind.id(), blind.name(), e.toString()))));
+        return ScheduledPass.bounded("blinds Gen2 reconciliation", GEN2_LIMIT,
+            () -> pass(blind -> blind.binding() instanceof BlindBinding.ShellyGen2, this::readGen2,
+                (blind, e) -> Mono.fromRunnable(() -> log.info("Reconciliation of blind {} ({}) failed: {}",
+                    blind.id(), blind.name(), e.toString()))));
     }
 
     private Mono<Void> pass(

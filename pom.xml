@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.1</version>
+		<version>4.1.2</version>
 		<relativePath/>
 		<!-- lookup parent from a repository -->
 	</parent>
@@ -47,7 +47,7 @@
 		<commons-suncalc.version>3.11</commons-suncalc.version>
 
 		<!--  internal dependencies versions-->
-		<cholewa-commons.version>1.9.0</cholewa-commons.version>
+		<cholewa-commons.version>1.11.0</cholewa-commons.version>
 		<smart-home-sdk.version>1.12.0</smart-home-sdk.version>
 		<shelly-client.version>2.1.0</shelly-client.version>
 
