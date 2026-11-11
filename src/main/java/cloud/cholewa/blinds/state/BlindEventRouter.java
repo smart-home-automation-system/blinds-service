@@ -125,7 +125,7 @@ public class BlindEventRouter {
             .flatMap(Mono::justOrEmpty)
             .cast(ShellyEvent.Status.class)
             .flatMap(status -> Mono.justOrEmpty(status.as(BthomeSensorStatus.class)))
-            .doOnNext(status -> windowSensors.observe(topic.deviceId(), topic.index(), status))
+            .flatMap(status -> windowSensors.observe(topic.deviceId(), topic.index(), status))
             .then();
     }
 

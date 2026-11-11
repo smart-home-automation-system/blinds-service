@@ -47,9 +47,9 @@
 		<commons-suncalc.version>3.11</commons-suncalc.version>
 
 		<!--  internal dependencies versions-->
-		<cholewa-commons.version>1.11.0</cholewa-commons.version>
-		<smart-home-sdk.version>1.12.0</smart-home-sdk.version>
-		<shelly-client.version>2.1.0</shelly-client.version>
+		<cholewa-commons.version>1.14.0</cholewa-commons.version>
+		<smart-home-sdk.version>1.19.0</smart-home-sdk.version>
+		<shelly-client.version>2.7.0</shelly-client.version>
 
 		<!--  plugins versions-->
 		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
