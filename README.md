@@ -111,6 +111,16 @@ Everything is non-blocking (Spring WebFlux / Reactor):
   or its gateway has been silent longer, `closed` when every one is closed, and `no sensor` -
   counted as closed - when the registry links none. A switched-off sensor is left out of its
   window. The Gen1 Door/Window 2 of the sauna entrance is not used (owner, 2026-10-17).
+  **The last reading of every sensor survives a restart** (HAS-420): on 2026-11-10 a grid outage
+  restarted the gateways and this service together, and the gateways brought back the "open" half
+  of short open/close pairs with its old time. Every new reading (a new value, or the same value
+  heard later - never a plain confirmation) is stored in `window_sensor_reading` (V6, one row per
+  sensor) and read back at the start, before the first read of the gateways. A reading read back
+  is **not known** until a gateway stands for it - a `window closed` condition never acts on it -
+  and only the gateway's value is compared with it: an older one is ignored (an INFO once per
+  sensor and start), an equal or newer one confirms or replaces it. A failed write is a WARN and
+  never stops a read or the listener; the rows of a sensor gone from the registry go once the
+  registry lists another set of sensors, never on an empty answer.
 - **Notifications** go to the `notification` exchange of the virtual host `/notification`
   over a second connection (`NotificationPublisher` of `cholewa-commons`), named
   `<pod>/notification`: the alerts of the availability monitor and of the unconfirmed commands.

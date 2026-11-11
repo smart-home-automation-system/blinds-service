@@ -15,7 +15,7 @@ Part of the smart-home-automation-system organization — org-wide conventions, 
 repository map and working rules come from the workspace-level context
 (`organization-repository/claude/organization.md`). The user writes the code in this
 repository themselves; Claude's default role here is analysis, code review and security
-review.
+review - the owner had Claude implement the blinds epic (HAS-242) and the stored window readings (HAS-420).
 
 ## Role in the system
 
@@ -24,10 +24,10 @@ review.
   `database-service` (device registry), `weather-service` and `amx-service` over k8s DNS
   (`internal.service.*`). The command endpoints (`/home/blinds/...`, README) are not routed by
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
-- Uses libraries: `cholewa-commons` 1.11.0 (pool, error contract, connection names, Logbook in the reactive chain,
+- Uses libraries: `cholewa-commons` 1.14.0 (since HAS-420, no-op bumps from 1.11.0; pool, error contract, connection names, Logbook in the reactive chain,
   the scheduler pool and `ScheduledPass`,
-  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.12.0 (`SmartDevice` of
-  the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.1.0
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.19.0 (`SmartDevice` of
+  the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.7.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
 - Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
   (once a day), `GET /home/weather/current` of `weather-service` (every minute) - the names
@@ -37,7 +37,7 @@ review.
   `BlindsServiceApplicationTest`. Tables: `blinds_state` (`V1`, HAS-245); `blinds_schedule`,
   `blinds_schedule_target`, `blinds_schedule_condition` (`V2`, HAS-246); `blinds_schedule_run`
   (`V3`, HAS-247); `blinds_schedule_pause` (`V4`, HAS-232); `blinds_availability_alert` (`V5`,
-  HAS-250). **The next migration is `V6`**.
+  HAS-250); `window_sensor_reading` (`V6`, HAS-420). **The next migration is `V7`**.
 - Integrates with hardware: the Eaton blinds through `amx-service`, the Shelly blinds over HTTP
   (commands, since HAS-244) and MQTT (their status topics — HAS-245). Registered for the
   verification of HAS-244: `Office window` (id 52, Gen1 SHSW-25) and `Office door` (id 53, Gen2
@@ -244,6 +244,25 @@ review.
     `last_updated_ts` wins between a read and a publish. A value that is no boolean is ignored.
   - The state lives in memory: after a restart a window is unknown until the first read of its
     gateway (seconds - the refresh starts at once).
+  - **The last reading of every sensor is stored** (HAS-420, epic HAS-418, the copy of heating-service HAS-419;
+    `WindowSensorStore`, `window_sensor_reading` V6). On 2026-11-10 a grid outage restarted the gateways with the
+    service; the gateways restored the "open" half of short open/close pairs with its old `last_updated_ts` and lost
+    the "closed", so bedroom main / second, cinema and the living room door read open. What to keep:
+    - **Written on a change of the reading only** - a new value, or the same value with a newer `updated_at`; never on
+      a confirmation. `WindowSensors.report` answers the change, `apply` / `observe` hand it to the store: the read
+      of a gateway stores its changes one after the other, `BlindEventRouter` subscribes to what `observe` answers.
+      **A failed write is a WARN and completes** - it never stops a refresh or the listener - and **a write is bounded**
+      (`WindowSensorStore.WRITE_TIMEOUT`, 30 s, as the state writes): it is part of the chain of the MQTT listener.
+    - **The upsert keeps the later reading** (`ON CONFLICT ... WHERE EXCLUDED.updated_at >= updated_at`).
+    - **Read back before the first read of a gateway** by `WindowReadingLoader`, a `SmartLifecycle` of phase 0 (the
+      scheduled read and the device listener start after it), **never fatal** (15 s). A reading read back has
+      `confirmedAt` null, so it is `unknown` - a `window closed` condition never acts on it. Only a value of a
+      gateway confirms it (equal), replaces it (newer) or is ignored (older - an INFO once per sensor and start); a
+      component without a value confirms nothing.
+    - The rows of the sensors the registry no longer lists are deleted once a successful refresh lists another set of
+      sensors than the last trim; **a registry that lists none keeps every row**. One statement per call - the pool of
+      2 holds.
+    - heating-service has the same in its copy - two copies, the commons rule.
   - The Gen1 Door/Window 2 of the sauna entrance is out (owner, 2026-10-17): `/events/gen1` still
     takes Gen1 blinds only.
 - **One instance, `Recreate`, never scaled**: the schedule engine lives in its memory (holds, the
