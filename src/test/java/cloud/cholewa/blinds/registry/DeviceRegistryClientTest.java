@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.groups.Tuple.tuple;
 
 class DeviceRegistryClientTest {
 
@@ -44,7 +45,7 @@ class DeviceRegistryClientTest {
 
         client.getBlinds().as(StepVerifier::create)
             .assertNext(devices -> assertThat(devices).extracting(SmartDevice::getId, SmartDevice::getRoom)
-                .containsExactly(org.assertj.core.groups.Tuple.tuple(17L, RoomName.KITCHEN)))
+                .containsExactly(tuple(17L, RoomName.KITCHEN)))
             .verifyComplete();
 
         final RecordedRequest request = server.takeRequest();

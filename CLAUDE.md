@@ -26,7 +26,7 @@ review - the owner had Claude implement the blinds epic (HAS-242) and the stored
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
 - Uses libraries: `cholewa-commons` 1.14.0 (since HAS-420, no-op bumps from 1.11.0; pool, error contract, connection names, Logbook in the reactive chain,
   the scheduler pool and `ScheduledPass`,
-  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.19.0 (`SmartDevice` of
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.21.0 (since HAS-434, a no-op bump - the registry is read by `?kind=`; `SmartDevice` of
   the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.7.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
 - Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
@@ -53,6 +53,11 @@ review - the owner had Claude implement the blinds epic (HAS-242) and the stored
 - Local run: `home,local` Spring profiles, port `6011` (Actuator `8011`); in-cluster port
   `6200`, Actuator `8200`. Locally the broker is `localhost`, the services are on 6005 / 6010 /
   6001, and the broker passwords default to a dummy.
+- **Imports, never a fully qualified class name in code** (owner, 2026-11-12; HAS-434 removed the last ones): a class
+  of another package is imported, also in tests - no `java.util.Set.of(...)` or `org.assertj.core.groups.Tuple.tuple`
+  inline (a static import of `tuple`). A package in a string literal (the text of a logged exception in
+  `MoveConfirmationTest`) is text, not a reference. Before a change is done, search the diff for a package path followed
+  by a class name outside the `import` and `package` lines.
 
 ## Specifics
 

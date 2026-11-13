@@ -33,6 +33,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -372,7 +373,7 @@ class ScheduleEvaluatorTest {
             tracker.observe(kept, Truth.TRUE, NOW);
             tracker.observe(replaced, Truth.TRUE, NOW);
 
-            tracker.retain(java.util.Set.of(kept));
+            tracker.retain(Set.of(kept));
 
             assertThat(tracker.since(kept)).isEqualTo(NOW);
             assertThat(tracker.since(replaced)).isNull();

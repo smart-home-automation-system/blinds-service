@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.groups.Tuple.tuple;
 
 //The runs of the schedules on the table of V3, in a PostgreSQL of Testcontainers: once a day per
 //schedule and blind whatever the engine remembers, the outcomes by the names of their constants, and
@@ -77,8 +78,8 @@ class ScheduleRunRepositoryTest {
             .assertNext(runs -> assertThat(runs)
                 .extracting(ScheduleRunEntity::deviceId, ScheduleRunEntity::outcome, ScheduleRunEntity::firedAt)
                 .containsExactlyInAnyOrder(
-                    org.assertj.core.groups.Tuple.tuple(17L, RunOutcome.MOVED, FIVE_PM),
-                    org.assertj.core.groups.Tuple.tuple(52L, RunOutcome.UNSUPPORTED, FIVE_PM)))
+                    tuple(17L, RunOutcome.MOVED, FIVE_PM),
+                    tuple(52L, RunOutcome.UNSUPPORTED, FIVE_PM)))
             .verifyComplete();
         sut.findByScheduleIdAndFiredOnOrderById(scheduleId, DAY).map(ScheduleRunEntity::deviceId).as(StepVerifier::create)
             .expectNext(17L, 52L)
