@@ -70,6 +70,19 @@ class BlindsCommandServiceTest {
         order.verify(driver).move(KITCHEN, BlindCommand.CLOSE);
     }
 
+    //HAS-466: safety-service opens the blinds of the room of a fire alarm - its source goes to the
+    //state as it comes, and nothing in a command pauses the schedules of a blind
+    @Test
+    void should_move_a_blind_for_safety_with_its_source() {
+        when(driver.move(KITCHEN, BlindCommand.OPEN)).thenReturn(Mono.empty());
+
+        service.move(17, BlindCommand.OPEN, CommandSource.SAFETY).as(StepVerifier::create).verifyComplete();
+
+        verify(protection).check(KITCHEN, CommandSource.SAFETY);
+        verify(tracker).commanded(KITCHEN, CommandSource.SAFETY, CommandTarget.move(Direction.OPEN));
+        verify(driver).move(KITCHEN, BlindCommand.OPEN);
+    }
+
     //HAS-291: the wait for the movement starts once the command is sent - with the command the
     //tracker noted, so a newer one is told apart; a stop and a position wait for no direction
     @Test

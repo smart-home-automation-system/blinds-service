@@ -8,8 +8,8 @@ import java.time.LocalDateTime;
  * without one, no reachability before anything was heard from the device or after a restart.
  *
  * @param movedAt   when the state began - the start of the movement or of the rest
- * @param source    who moved it: {@code dashboard}, {@code schedule}, {@code protection} for a
- *                  command of this service, the word of a Shelly device, otherwise {@code external}
+ * @param source    who moved it: {@code dashboard}, {@code schedule}, {@code protection}, {@code safety}
+ *                  for a command of this service, the word of a Shelly device, otherwise {@code external}
  */
 public record BlindStatus(
     BlindState state,

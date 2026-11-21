@@ -26,7 +26,7 @@ review - the owner had Claude implement the blinds epic (HAS-242) and the stored
   `api-gateway-service` yet (HAS-251); the dashboard will branch on their codes.
 - Uses libraries: `cholewa-commons` 1.14.0 (since HAS-420, no-op bumps from 1.11.0; pool, error contract, connection names, Logbook in the reactive chain,
   the scheduler pool and `ScheduledPass`,
-  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.21.0 (since HAS-434, a no-op bump - the registry is read by `?kind=`; `SmartDevice` of
+  `NotificationPublisher`, `cholewa.required-properties`), `smart-home-sdk` 1.24.0 (since HAS-466, a no-op bump - the registry is read by `?kind=`; `SmartDevice` of
   the registry, `CalendarDay` / `DayType` of the calendar), `shelly-client` 2.7.0
   (`ShellyGen1Client`, `ShellyRpcClient`); `commons-suncalc` for the times of the sun.
 - Reads from other services for the engine: `GET /home/calendar/days` of `database-service`
@@ -223,6 +223,10 @@ review - the owner had Claude implement the blinds epic (HAS-242) and the stored
     (accepted in review). The pass reads the pauses strictly - none read, nothing fires; the reads
     of the blinds use `pausedAsLastKnown` (the last read with a WARN), because they were served
     from memory before and must not go blank for a database away (found in review).
+  - **A move by `safety` pauses nothing** (HAS-466): safety-service opens the blinds of the room of a
+    fire alarm with `source=safety`, which is stored in `blinds_state` as it comes and writes no
+    `blinds_schedule_pause` row - a schedule may close the blind again in its window, which is fine
+    once the alarm is over (the task). No source pauses a blind; only `PUT /{id}/schedule-pause` does.
     `GET /{id}/schedules` (`BlindSchedules`) is `ScheduleEngine.today` of every schedule whose
     targets take in the blind, cut down to it - the read of the room view of the dashboard.
   - A decision is logged at INFO when it changes, not every minute; a weather failure is one WARN
