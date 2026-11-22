@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.2</version>
+		<version>4.1.3</version>
 		<relativePath/>
 		<!-- lookup parent from a repository -->
 	</parent>
@@ -48,7 +48,7 @@
 
 		<!--  internal dependencies versions-->
 		<cholewa-commons.version>1.14.0</cholewa-commons.version>
-		<smart-home-sdk.version>1.21.0</smart-home-sdk.version>
+		<smart-home-sdk.version>1.24.0</smart-home-sdk.version>
 		<shelly-client.version>2.7.0</shelly-client.version>
 
 		<!--  plugins versions-->

@@ -82,7 +82,7 @@ class BlindsControllerTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"dashboard,DASHBOARD", "schedule,SCHEDULE", "protection,PROTECTION"})
+    @CsvSource({"dashboard,DASHBOARD", "schedule,SCHEDULE", "protection,PROTECTION", "safety,SAFETY"})
     void should_pass_who_asked_for_the_move(final String parameter, final CommandSource source) {
         when(blindsCommandService.move(17, BlindCommand.OPEN, source)).thenReturn(Mono.empty());
 

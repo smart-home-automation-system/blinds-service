@@ -66,6 +66,6 @@ public class BlindsController {
 
     private static CommandSource source(final String source) {
         return CommandSource.ofParameter(source)
-            .orElseThrow(() -> new ServerWebInputException("source must be dashboard, schedule or protection"));
+            .orElseThrow(() -> new ServerWebInputException("source must be dashboard, schedule, protection or safety"));
     }
 }

@@ -11,7 +11,7 @@
 
 ![GitHub top language](https://img.shields.io/github/languages/top/smart-home-automation-system/blinds-service?style=plastic)
 ![Java](https://img.shields.io/badge/java-21-yellow?style=plastic)
-![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.2-blue?style=plastic)
+![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.3-blue?style=plastic)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=smart-home-automation-system_blinds-service&metric=coverage)](https://sonarcloud.io/summary/new_code?id=smart-home-automation-system_blinds-service)
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=smart-home-automation-system_blinds-service&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=smart-home-automation-system_blinds-service)
 
@@ -210,8 +210,10 @@ yet (HAS-251) — inside the cluster, or through a port-forward.
   blind got there. A single blind answers with no body.
 - **`command`, `room` and `source` are taken exactly as written**; anything else is a `400`.
   `room` is the value of the registry (`living room`, `office`, …). `source` is `dashboard`
-  (the default), `schedule` or `protection`. It becomes the `source` of the movement the
-  command starts; nothing decides by it yet.
+  (the default), `schedule`, `protection` or `safety` (safety-service opening the blinds of the
+  room of a fire alarm, HAS-466). It becomes the `source` of the movement the command starts;
+  nothing decides by it yet - no source pauses the schedules of a blind, so a schedule may move a
+  blind safety opened once its window comes.
 - **A room** answers `{"room", "command", "moved": [{"id", "name"}], "failed": [{"id", "name", "code"}]}`.
   A blind that fails is skipped and named in `failed`, and the others still move. When none
   moved, the room fails like a single blind: `DEVICE_FAILED` when a device failed, otherwise

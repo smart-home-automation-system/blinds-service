@@ -5,11 +5,12 @@ import java.util.Optional;
 
 /**
  * Who asked for a move, by the value of the {@code source} parameter: a person on the dashboard,
- * a schedule, or the wind and frost protection. Written to the log of every command, and the
- * {@code source} of the state of a blind the command moved.
+ * a schedule, the wind and frost protection, or safety-service opening the blinds of the room of a
+ * fire alarm (HAS-466). Written to the log of every command, and the {@code source} of the state of
+ * a blind the command moved. No source pauses the schedules of a blind - only its own endpoint does.
  */
 public enum CommandSource {
-    DASHBOARD("dashboard"), SCHEDULE("schedule"), PROTECTION("protection");
+    DASHBOARD("dashboard"), SCHEDULE("schedule"), PROTECTION("protection"), SAFETY("safety");
 
     private final String value;
 
